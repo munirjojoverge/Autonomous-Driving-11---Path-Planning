@@ -6,27 +6,26 @@
 
 #include <tuple>
 #include <stdexcept>
-#include <math.h>       /* atan2 */
+
 #include "smartVehicle.h"
 #include "utils.h"
 #include "spline.h"
 
 using namespace std;
 using namespace utils;
+using namespace constants;
 
 /**
 * Initializes SmartVehicle
 */
-//SmartVehicle::SmartVehicle() {}
-
 
 SmartVehicle::~SmartVehicle() {}
 /**/
 void SmartVehicle::update(vector<double> EgoData, vector<vector<double>> sensor_fusion, vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals)
 {
-	//cout << "SmartVehicle begining Updated" << endl;
+	////cout << "SmartVehicle begining Updated" << endl;
 
-	// 1) Unpack nad update the ego vehicle data
+	// 1) Unpack and update the ego vehicle data
 	this->x = EgoData[0];
 	this->y = EgoData[1];
 	this->s = EgoData[2];
@@ -36,173 +35,80 @@ void SmartVehicle::update(vector<double> EgoData, vector<vector<double>> sensor_
 	
 	this->lane = planner.get_lane(this->d);
 
-	if (this->s > this->planner.road.max_s)
+	if (this->s > this->planner.road.TRACK_LENGTH)
+	{
+		cout << "***** New round" << endl;
 		this->s = 0;
-
-	cout << "****************************************************************" << endl;
-	cout << "0 - Ego s: " << this->s << " Ego d: " << this->d << " Road w = " << this->planner.road.lane_width << endl;
-	cout << "0 - Ego x: " << this->x << " Ego y: " << this->y << endl;
-	cout << "0 - Ego Speed: " << this->speed << endl;
-	cout << "****************************************************************" << endl;
-	/*
+	}
+	//////cout << "****************************************************************" << endl;
+	//////cout << "***************************NEW CYCLE****************************" << endl;
+	//////cout << "****************************************************************" << endl;
+	//////cout << "0 - Ego s: " << this->s << " Ego d: " << this->d << " Road w = " << this->planner.road.lane_width << endl;
+	//////cout << "0 - Ego x: " << this->x << " Ego y: " << this->y << endl;
+	//////cout << "0 - Ego Speed: " << this->speed << endl;
+	//////cout << "0 - Ego Speed: " << this->speed << " Yaw: " << this->yaw << endl;
+	//////cout << "****************************************************************" << endl;
 	
-	*/
+	calculate_new_starting_point_4_Traj_Generation(prev_x_vals.size()); // This will always be the END connditions of the previous traj (s, s_dot, s_ddot, d_....)
 
-	calculate_new_starting_point(prev_x_vals, prev_y_vals);
+	// we will convert all sensor fusion data into a convenient format
+	vector<Road_Vehicle> road_vehicles = generate_road_vehicles(sensor_fusion);
 	
-
-	// Now we Update the "State/Maneuver" of Ego based on it's data and the sensor_fusion data
-	update_state(sensor_fusion, prev_x_vals, prev_y_vals, next_x_vals, next_y_vals);
-	//cruise_control(prev_x_vals, prev_y_vals, next_x_vals, next_y_vals);
-	
+	// Now we Update the "Maneuver/Maneuver" of Ego based on it's data and the sensor_fusion data
+	update_state(road_vehicles, prev_x_vals, prev_y_vals, next_x_vals, next_y_vals);
+		
 }
 
-void SmartVehicle::calculate_new_starting_point(vector<double> prev_x_vals, vector<double> prev_y_vals)
+vector<Road_Vehicle> SmartVehicle::generate_road_vehicles(vector<vector<double>> sensor_fusion)
+{
+	vector<Road_Vehicle> road_vehicles;
+	for (auto vehicle_data : sensor_fusion)
+	{
+		int id    = int(vehicle_data[0]);
+		double x  = vehicle_data[1];
+		double y  = vehicle_data[2];
+		double vx = vehicle_data[3];
+		double vy = vehicle_data[4];
+		double s  = vehicle_data[5];
+		double d  = vehicle_data[6];
+		Road_Vehicle vehicle(id, x, y, vx, vy, s, d);
+		vehicle.s = vehicle.predict_frenet_at(this->Ego_start_status.prediction_time).s;
+		road_vehicles.push_back(vehicle);
+	}
+	return road_vehicles;
+}
+
+void SmartVehicle::calculate_new_starting_point_4_Traj_Generation(int not_processed_traj_size)
 {	
-	cout << "****************************************************************" << endl;
-	cout << "calculate_new_starting_point" << endl;
+	//////cout << "****************************************************************" << endl;
+	//////cout << "******************calculate_new_starting_point******************" << endl;
 
-	/*
-	We want to "know" where will we start generating then new trajectory.
-	The idea is to build upon our previous Traj. Since the "sensor_fusion" data is only from "now", we will have
-	to create a trajectory based from this data and from teh Ego car is reported to be even though we will have to 
-	move in this new traj a time "t". We do this simply because while the Sim sent us the telemetry and we processed it, 
-	the Ego car has moved a few (unkown) time steps ahead.
-	For this reason we really don't know where the Ego car really is and we  don't want to get in this "dangerous" game 
-	of trying to perfectly create a new Traj exactly where truly the Ego car is....because we cant!
-	On the other hand, we also don't want just to fill-in more points at then end of the "prev_path". The reason is that we might be
-	planning a Traj too far into the future.
-	The "middle point" or "sweet spot" should be somewhere in the middle. Not to close to the beginning of prev_path but also
-	not at the end.
-	We know that every single point on "prev_path" is 0.02 sec away from the next. That way if we want to use, let's say, 0.5 sec of the
-	prev_path we can take 0.5sec/0.02 = 25 points from prev_path and use this as a starting point for our new traj.
-	
-	For this reason, I created a new property of the Planner class that is "time_offset_from_prev_path" which actually describes
-	where in "time" we want to start generating the new trajectory starting from pre_path beginning. Also we will have to be carefull about
-	going too far that we might be outside prev_path. I'll have to make sure that if this time goes beyond prev_path, we just go to the
-	end points of prev_path.	
-	*/
-	double s1;
-	double d1;
-	double vs1;
-	double vd1;
-	double as1;
-	double ad1;
-
-	double x1;
-	double y1;
-	double x2;
-	double y2;
-	double theta;
-	double dt = this->planner.dt;
-	int use_prev_points = this->planner.time_offset_from_prev_path / dt;
-	int prev_path_size = prev_x_vals.size();
-	if (use_prev_points > prev_path_size) use_prev_points = prev_path_size;
-
-	this->planner.new_path_x.clear();
-	this->planner.new_path_y.clear();
-
-	cout << "Prev_path length: " << prev_path_size << endl;
-	if (prev_path_size > 3 && prev_path_size >= use_prev_points)
-	{		
-		int start_idx = use_prev_points;
-		// 1 st we will go to the last point (to re-use) and we will move backwards to calcualte the Speed and Accel that our Ego car should have				
-		x1 = prev_x_vals[start_idx - 1];
-		y1 = prev_y_vals[start_idx - 1];
-		cout << " x1= " << x1 << " y1= " << y1 << endl;
-
-		x2 = prev_x_vals[start_idx - 2];
-		y2 = prev_y_vals[start_idx - 2];
-		cout << " x2= " << x2 << " y2= " << y2 << endl;
-
-		theta = atan2((y1 - y2), (x1 - x2));		
-		vector<double> s_d = this->planner.getFrenet(x1,y1, theta, this->planner.road.map_waypoints_x, this->planner.road.map_waypoints_y);
-		planner.ref_theta = theta;
-
-		s1 = s_d[0];
-		d1 = s_d[1];
-		cout << " s1= " << s1 << " d1= " << d1 << endl;
-
-		double x3 = prev_x_vals[start_idx - 3];
-		double y3 = prev_y_vals[start_idx - 3];
-		cout << " x3= " << x3 << " y3= " << y3 << endl;
-		theta = atan2((y2 - y3), (x2 - x3));
-		s_d = this->planner.getFrenet(x2, y2, theta, this->planner.road.map_waypoints_x, this->planner.road.map_waypoints_y);
-
-		double s2 = s_d[0];
-		double d2 = s_d[1];
-		cout << " s2= " << s2 << " d2= " << d2 << endl;
-		vs1 = (s1 - s2) / dt;
-		vd1 = (d1 - d2) / dt;
-
-		double x4 = prev_x_vals[start_idx - 4];
-		double y4 = prev_y_vals[start_idx - 4];
-		cout << " x4= " << x4 << " y4= " << y4 << endl;
-
-		theta = atan2((y3 - y4), (x3 - x4));
-		s_d = this->planner.getFrenet(x3, y3, theta, this->planner.road.map_waypoints_x, this->planner.road.map_waypoints_y);
-
-		double s3 = s_d[0];
-		double d3 = s_d[1];
-
-
-		double vs2 = (s2 - s3) / dt;
-		double vd2 = (d2 - d3) / dt;
-		as1 = (vs1 - vs2) / dt;
-		ad1 = (vd1 - vd2) / dt;
-
-
-		for (int i = 0; i < use_prev_points; i++)
-		{
-			this->planner.new_path_x.push_back(prev_x_vals[i]);
-			this->planner.new_path_y.push_back(prev_y_vals[i]);
-		}
-
+	if (started_planning) // that means that we sent a Traj before and we can use the "final_s and final_d" values to start our new trajectory
+	{				
+		Ego_start_status.prediction_time = not_processed_traj_size*dt;
+		////cout << "not_processed_traj_size: " << not_processed_traj_size << " Prediction time: " << Ego_start_status.prediction_time << endl;
+		
 	}
 	else
 	{
-		cout << "Not enough points to re-use" << endl;
-		s1 = this->s;
-		d1 = this->d;
-		vs1 = this->speed;// Usually this would happen only at the firs scan, and therefore the Speed would be 0.
-		vd1 = 0.0; // We are following the lane perfectly
-		as1 = 0.0;
-		ad1 = 0.0;
-		x1 = this->x;
-		y1 = this->y;
-		theta = this->yaw;
-		x2 = x1 - cos(theta);
-		y2 = y1 - sin(theta);
-		planner.ref_theta = theta;
+		////cout << "Not enough points to re-use - Frenet " << endl;
+		Ego_start_status.s = { this->s, 0.0, 0.0 };
+		Ego_start_status.d = { this->d, 0.0, 0.0 };
+		Ego_start_status.lane = planner.get_lane(Ego_start_status.d[0]);
 
-		this->planner.new_path_x.push_back(x2);
-		this->planner.new_path_x.push_back(x1);
-
-		this->planner.new_path_y.push_back(y2);
-		this->planner.new_path_y.push_back(y1);
-
-	}
-
-	// Now we Know where the Ego car need to start to generated the new Traj and also in its correct state ( speed and accel in both coordinates)	
-	this->planner.start_s = { s1,vs1,as1 };
-	this->planner.start_d = { d1,vd1,ad1 };
+		Ego_start_status.prediction_time = 0;
+		started_planning = true;
+	}	
 	
-
-	cout << "start_s: s: " << s1 << " vs: " << vs1 << " as: " << as1 << endl;
-	cout << "start_d: d: " << d1 << " vd: " << vd1 << " ad: " << ad1 << endl;
-
-	cout << "new_path x: " << x2 << " x1: " << x1 << endl;
-	cout << "new_path y: " << y2 << " y1: " << y1 << endl;
-
 }
 
-void SmartVehicle::update_state(vector<vector<double>> sensor_fusion, vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals)
+void SmartVehicle::update_state(vector<Road_Vehicle> road_vehicles, vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals)
 {
 	/*
 	Updates the "state/Maneuver" of the vehicle by assigning one of the
 	following values to state':
 	ST_CRUISE_CONTROL  // Cruise Control - Maintain a constant speed = SpeedLimit-buffer in the same lane
-	ST_WAIT,		   // SmartVehicle Following - Disntance with SmartVehicle in front is < d_min and we need to slow down & speed Up (calc accel) behind it until we can Change lane or move at the desired speed
+	ST_FOLLOW,		   // SmartVehicle Following - Disntance with SmartVehicle in front is < d_min and we need to slow down & speed Up (calc accel) behind it until we can Change lane or move at the desired speed
 	ST_LANE_CHANGE,    // Change lane
 
 	INPUTS
@@ -233,348 +139,840 @@ void SmartVehicle::update_state(vector<vector<double>> sensor_fusion, vector<dou
 
 	*/
 
-	/*
-	To make it easier, I'll ADD the "possible target states" depending on EGO's actual state and lane num
-	*/
-
-	// Let's Start by getting the DATA from the closest vehicle in front of Ego, AKA Vehicle A
-	vector<double> VehicleA; // { Va,TTC_a,TIV_a}
-	get_vehicle_infront_data(sensor_fusion, VehicleA);
-
-	// This vector holds the possible maneouvers: { tuple (maneouver1, params1), tuple (maneouver2, params2),...},	
-	vector < tuple<State, int > > possible_maneuvers;
-
-	// Go through the sensor fusion data and generate possible trajectories
-	generate_possible_maneuvers(sensor_fusion, VehicleA, possible_maneuvers);
-
-
+	
+	// Go through the road vehicles (from sensor fusion) and generate possible maneuvers. This will lead me to a target (position, speed and time)
+	vector<tuple<Maneuver, maneuver_params>> possible_maneuvers = generate_possible_maneuvers(road_vehicles);
+	
 	/*
 	Let's now EXPLORE each and every one of these possible maneuvers, genetate smooth trajectories,
 	calculate the COST of each one and select the BEST one...AND Update the Ego state (aka maneuver)
 	*/
-	vector<double> best_trajectory;
-	generate_best_trajectory(sensor_fusion, VehicleA, possible_maneuvers, best_trajectory, this->state);
+	Trajectory best_trajectory = generate_best_trajectory(road_vehicles, possible_maneuvers);
+	//////cout << " Best Traj - Target Lane: " << planner.get_lane(best_trajectory.goal_d[0]) << endl;	
 
-	// Now that we have Best Trajectory, let's actually update the State (maneuver)
+	// When we do a Lane change, we might got cut in the middle and we want ot remember target speed and target lane to avoid re-calc 
+	this->target_lane = planner.get_lane(best_trajectory.goal_d[0]);
+	this->prev_target_speed = best_trajectory.goal_s[1];
+
+	this->state = best_trajectory.maneuver;
+
+	planner.following_count += (best_trajectory.maneuver == ST_FOLLOW) ? 1 : -planner.following_count;
 
 	// Finally let's generate the next_x_vals and next_y_vals	
-	//smooth_trajectory(best_trajectory, prev_x_vals, prev_y_vals, next_x_vals, next_y_vals);
-	cruise_control2(best_trajectory, prev_x_vals, prev_y_vals, next_x_vals, next_y_vals);
+	smooth_trajectory_frenet2(best_trajectory, prev_x_vals, prev_y_vals, next_x_vals, next_y_vals);
 
+	// What we send to the simulator will be Executed...There is no turn back. Therefore, Now is when I can update the target lane we sent
+	// let's update the target lane for next pass AND the new "State" (Which is the menuver that the vehicle is executing)
+	//this->target_lane = planner.get_lane(planner.final_d[0]);
+	////cout << " Actual - Target Lane: " << this->target_lane << endl;
+	
 }
 
-void SmartVehicle::generate_possible_maneuvers(vector<vector<double>> sensor_fusion, vector<double> VehicleA, vector < tuple<State, int > > &possible_maneuvers)
+vector < tuple<Maneuver, maneuver_params > > SmartVehicle::generate_possible_maneuvers(vector<Road_Vehicle> road_vehicles)
 {
-	cout << "*******************Generating possible maneuvers *********************" << endl;
+	//////cout << "****************************************************************" << endl;	
+	//////cout << "**************** Generating possible maneuvers *****************" << endl;
+	double Ego_s = Ego_start_status.s[0];
+	double Ego_vs = Ego_start_status.s[1];
+	int Ego_lane = Ego_start_status.lane;
+	double Ego_d = Ego_start_status.d[0];
+	/*
+	We will have to make decisions NOT based on where EGO is but from WHERE it will be once we can actually execute
+	the maneuver. That means that, since the SIM will execute 
+	*/
+	// let's create the return structure;
+	vector < tuple<Maneuver, maneuver_params > > possible_maneuvers;
 
-	double Va = VehicleA[0];
-	double TTC_a = VehicleA[1];
-	double TIV_a = VehicleA[2];
+	// Let's Start by getting the DATA from the closest vehicle in front of Ego, AKA Vehicle A		
+	Road_Vehicle Vehicle_A = planner.get_closest_vehicle_in_lane(Ego_lane, Ego_s, true, road_vehicles);
 
+	/* ************* EMERGENCY MANEUVER ************
+	   ********************************************/
+	if (!Vehicle_A.empty()) 
+	{					
+		//Vehicle_A.set_TTC(Ego_s, Ego_vs);
+		//Vehicle_A.set_TIV(Ego_s);
+		/*
+		If we have a car in front and we are TOO close, we need to go into WAIT (Vehicle Following)
+		*/
+		if (Vehicle_A.predict_frenet_at(0.0).s < this->s + VEHICLE_SIZE[0])
+		{
+			cout << "EMERGENCY..." << endl;
+			maneuver_params params = generate_emergency_params(Vehicle_A);			
+			possible_maneuvers.push_back(make_tuple(ST_FOLLOW, params));
+			return possible_maneuvers;
+
+		}		
+	}
+
+	/* ************* ESCAPE MANEUVER ************
+	 We have been following A and stuck by B on one side or both sides
+	********************************************/
+	/*
+	if (planner.following_count == 100) // this should be around 20 sec (aprox 30 points consumed by Sim * 0.02 * count = n secs)..depending on how fast the Sim responds back and how fast I process everything
+	{
+		cout << "ESCAPING..." << endl;
+		maneuver_params params = generate_emergency_params(Vehicle_A);
+		possible_maneuvers.push_back(make_tuple(ST_FOLLOW, params));
+		return possible_maneuvers;
+	}
+	*/
+
+	follow_maneuver_added = false;		
+
+	double Vdes = planner.Vs_desired;
+	double min_cruise_distance = MIN_FOLLOW_DISTANCE + Ego_vs * DESIRED_TIME_GAP_FOLLOWING;
+
+	////cout << "WE ARE IN..." << endl;
 	switch (this->state)
 	{
-	case ST_WAIT: // If I'm in WAIT it's ONLY because I must have other car in-front!! (No need to check for nearest_infront being empty i.e Va > 0)
-	{
-		cout << "8 - Wait" << endl;
-		/* If our car is in any lane num smaller than lanes available,
-		and assuming lane 0 is on tha far right, we can always make a Lane-Change-Left
-		*/
-		if (this->lane < (this->planner.road.num_lanes - 1))
+		case ST_CRUISE_CONTROL:
 		{
-			cout << "9 - Wait -> Left lane " << endl;
-			// EVALUATE TRANSITION CONDITIONS THAT COULD EXIT ST_WAIT TOWARDS "LEFT" (+1 LANE)
-			update_possible_maneuvers(sensor_fusion, 1, Va, possible_maneuvers);
+			cout << "CRUISE STATE(0): " << this->state << endl;
+			////cout << "      min_cruise_distance: " << min_cruise_distance << endl;			
+			/* If our car is in any lane num smaller than lanes available,
+			and assuming lane 0 is on tha far right, we can always make a Lane-Change-Left
+			*/
+			if (Vehicle_A.empty() || ( (Vehicle_A.s > (Ego_s + min_cruise_distance)) /*&& Vehicle_A.TTC > MIN_TTC && Vehicle_A.TIV > MIN_TIV*/) ) // 
+			{
+				cout << "Continue cruising " << endl;
+				maneuver_params params = generate_cruise_control_params(Vdes);
+				possible_maneuvers.push_back(make_tuple(ST_CRUISE_CONTROL, params));
+			}
+			else // We have a vehicle in front AND we are too close... We will go into Vehicle Following State
+			{
+				cout << "We have a car in front..too close " << endl;			
+				////cout << "Going into Following state " << endl;
+				////cout << "      Vehicle_A.TTC: " << Vehicle_A.TTC << " MIN_TTC: " << MIN_TTC << endl;
+				////cout << "      Vehicle_A.TIV: " << Vehicle_A.TIV << " MIN_TIV: " << MIN_TIV << endl;
+				maneuver_params params = generate_follow_params(Vehicle_A);					
+				possible_maneuvers.push_back(make_tuple(ST_FOLLOW, params));								
+			}
+			break;
 		}
 
-		/*
-		if our car is in any lane but the first lane, it can always make a Lane-Change-Right
-		*/
-		if (this->lane > 0)
+		case ST_FOLLOW:	
 		{
-			cout << "10 - Wait -> Right lane " << endl;
-			// EVALUATE TRANSITION CONDITIONS THAT COULD EXIT ST_WAIT TOWARDS "RIGHT" (-1 LANE)
-			update_possible_maneuvers(sensor_fusion, -1, Va, possible_maneuvers);
-		}
+			cout << "FOLLOWING STATE(1): " << this->state << endl;
+			
+			/* If We have NO car infront ...we can go into Cruise Control.
+			   This is the case where, despite the fact that we were in WAIT state and therefore
+			   we had a car infront and couldn't change lanes yet, the car in front actually 
+			   changed lane leaving us with room to go into cruise control.
+			*/
+			if (Vehicle_A.empty()) 
+			{
+				////cout << "No cars infront! "<< endl;
+				maneuver_params params = generate_cruise_control_params(Vdes);
+				possible_maneuvers.push_back(make_tuple(ST_CRUISE_CONTROL, params));
+			}
+			else // We have a vehicle in front
+			{
+				////cout << "We have a car in front " << endl;					
+				// We can always Stay following
+				maneuver_params params = generate_follow_params(Vehicle_A);
+				possible_maneuvers.push_back(make_tuple(ST_FOLLOW, params));
 
-		/*
-		I the car in front is far away or it's speeding up, we can actually try to achieve our "desired Speed"
-		*/
-		if (TTC_a > 1 || TIV_a > 0.5) // Then we can speed up
-		{
-			cout << "11 - Wait -> move to Cruise Control " << endl;
-			possible_maneuvers.push_back(make_tuple(ST_CRUISE_CONTROL, 0));
-		}
-		else
-		{
-			cout << "12 - Wait -> Keep Waiting " << endl;
-			possible_maneuvers.push_back(make_tuple(ST_WAIT, 0));
-		}
+				/* If our car is in any lane num smaller than lanes available,
+				and assuming lane 0 is the FAST LANE, then we can always make a Lane-Change-RIGHT
+				*/
+				if (Ego_lane < (this->planner.road.num_lanes - 1))
+				{
+					//////cout << "9 - Wait -> Right_lane " << endl;
+					int Right_lane = Ego_lane + 1;
+					
+					////cout << "NO car on Right_lane: " << Right_lane << endl;
+					maneuver_params params = generate_change_lane_params(Right_lane, Ego_vs * LANE_CHANGE_SLOW_DOWN_FACTOR);
+					possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, params));
+					/*
+					Road_Vehicle Vehicle_B  = planner.get_closest_vehicle_in_lane(Right_lane, Ego_s, false, road_vehicles);					
+					if (Vehicle_B.empty()) // We just need to perform a lane change without hesitation, because we don't have anyone in the left lane
+					{
+						////cout << "NO car on Right_lane: " << Right_lane << endl;
+						maneuver_params params = generate_change_lane_params(Right_lane, Vdes * LANE_CHANGE_SLOW_DOWN_FACTOR);
+						possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, params));
+					}
+					else
+					{
+						////cout << "We DO have a car on Right_lane: " << Right_lane << endl;
+						// EVALUATE TRANSITION CONDITIONS THAT COULD EXIT THIS STATE						
+						Vehicle_B.set_TTC(Ego_s, Ego_vs);
+						Vehicle_B.set_TIV(Ego_s);
+						// In case we do a change lane infront of B, we need also to see who might be enfront of B to determine the the appropriate FINAL SPEED...and distance
+						Road_Vehicle Vehicle_B2 = planner.get_closest_vehicle_in_lane(Right_lane, Vehicle_B.s, true, road_vehicles);
+						update_possible_maneuvers(Right_lane, Vehicle_A, Vehicle_B, Vehicle_B2, possible_maneuvers);
+					}
+				    */
+				}
+				/*
+				if our car is in any lane but the FAST lane (0), it can always make a Lane-Change-LEFT
+				*/
+				if (Ego_lane > 0)
+				{
+					//////cout << "9 - Wait -> Right lane " << endl;
+					int Left_lane = Ego_lane - 1;
+					maneuver_params params = generate_change_lane_params(Left_lane, Ego_vs * LANE_CHANGE_SLOW_DOWN_FACTOR);
+					possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, params));
+					/*
+					Road_Vehicle Vehicle_B = planner.get_closest_vehicle_in_lane(Left_lane, Ego_s, false, road_vehicles);
+					if (Vehicle_B.empty()) // WE just need to perform a lane change without hesitation, because we don't have anyone in the Right lane
+					{
+						////cout << "NO car on Left_lane: " << Left_lane << endl;
+						maneuver_params params = generate_change_lane_params(Left_lane, Ego_vs* LANE_CHANGE_SLOW_DOWN_FACTOR);
+						possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, params));
+					}
+					else
+					{
+						////cout << "We DO have a car on Left_lane: " << Left_lane << endl;
+						// EVALUATE TRANSITION CONDITIONS THAT COULD EXIT THIS STATE						
+						Vehicle_B.set_TTC(Ego_s, Ego_vs);
+						Vehicle_B.set_TIV(Ego_s);
+						// In case we do a change lane infront of B, we need also to see who might be enfront of B to determine the the appropriate FINAL SPEED...and distance
+						Road_Vehicle Vehicle_B2 = planner.get_closest_vehicle_in_lane(Left_lane, Vehicle_B.s, true, road_vehicles);
+						update_possible_maneuvers(Left_lane, Vehicle_A, Vehicle_B, Vehicle_B2, possible_maneuvers);
+					}
+					*/
 
-		break;
-	}
+				}
 
-	case ST_LANE_CHANGE:
-	{
-		/* For now, the only state out of these 2 states is "CRUISE CONTROL", but how do I abort?? How to I check the road while I'm
-		performing the maneuver?? This is still an open issue that requires more time, brainstorming, research and testing
-		*/
-		cout << "stop 12" << endl;
+			}
 		
-		if (this->lane == this->target_lane)
-		{
-			cout << "Lane change -> Cruise Control" << endl;
-			possible_maneuvers.push_back(make_tuple(ST_CRUISE_CONTROL, 0));
-		}
-		else
-		{
-			cout << "Continue with the lane Change" << endl;
-			possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, this->target_lane));
+			break;
 		}
 
-		break;
-	}
-
-	case ST_CRUISE_CONTROL:
-	{
-
-		cout << "14 - Cruise Control " << endl;
-		if (TTC_a < 1 && TIV_a < 0.5) // Then we need to slow down
+		case ST_LANE_CHANGE:
 		{
-			cout << "15 - Cruise Control -> Wait " << endl;
-			possible_maneuvers.push_back(make_tuple(ST_WAIT, 0));
-		}
-		else
-		{
-			cout << "15 - Cruise Control -> Continue with Cruise Control" << endl;
-			possible_maneuvers.push_back(make_tuple(ST_CRUISE_CONTROL, 0));
-		}
-		break;
-	}
+			/* For now, the only states OUT of these 2 states is "CRUISE CONTROL", but how do I abort?? How to I check the road while I'm
+			performing the maneuver?? This is still an open issue that requires more time, brainstorming, research and testing
+			*/
+			cout << "LANE CHANGE STATE" << endl;
+		
+			if (fabs(Ego_d - planner.lane2d(this->target_lane)) < LANE_TOLERANCE) // Everytime we finish a manouver, we target to be at 0 accel.
+			{				
+				////cout << "LANE CHANGE FINISHED " << endl;
+				/* If our car is in any lane num smaller than lanes available,
+				and assuming lane 0 is on tha far right, we can always make a Lane-Change-Left
+				*/
+				if (Vehicle_A.empty() || ((Vehicle_A.s > (Ego_s + min_cruise_distance)) && Vehicle_A.TTC > MIN_TTC && Vehicle_A.TIV > MIN_TIV)) // 
+				{
+					cout << "Go into cruising " << endl;
+					maneuver_params params = generate_cruise_control_params(Vdes);
+					possible_maneuvers.push_back(make_tuple(ST_CRUISE_CONTROL, params));
+				}
+				else // We have a vehicle in front AND we are too close... We will go into Vehicle Following State
+				{
+					////cout << "We have a car in front..to close " << endl;
+					cout << "Going into Following state " << endl;
+					maneuver_params params = generate_follow_params(Vehicle_A);
+					possible_maneuvers.push_back(make_tuple(ST_FOLLOW, params));
+				}				
+			}
+			else
+			{
+				cout << "Continue with the lane Change. Target lane: " << this->target_lane  << endl;
+				//The most efficient thing to do is to do nothing!! Send our previous goal conditions...i.e. now are our Start Conditions
+				// But the problem is that we don't know how long will it take from NOW. So it's better just to recalculate it all
+				maneuver_params params = generate_change_lane_params(this->target_lane, this->prev_target_speed);
+				possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, params));		
+			}
 
-	default:
-		break;
-	}
-
+			break;
+		}
+	
+		default:
+			break;
+		}
+	
+	////cout << "Returning maneuvers... " << possible_maneuvers.size() << endl;
+	return possible_maneuvers;
 }
 
-void SmartVehicle::update_possible_maneuvers(vector< vector<double> > sensor_fusion, int dir, double Va, vector < tuple<State, int > > &possible_maneuvers)
+double SmartVehicle::get_maneuver_time(Ego_status Ego, double desired_speed)
 {
-	// the caller of this function should check that there is a left or Right adjacent lanes available.
-	//  for left changes, "dir = +1", for Right changes "dir = -1".
-	int adjLane = this->lane + dir;	
-	
-		
-	// Initialize needed variables
-	vector<double> params; // parameters of the maneouver
-	// We know we always add the direction
-	params.push_back(dir);
+	// for the S coordinate...Assuptions are: Accel_final = 0
+	double T1 = Ego.s[2] / MAX_JERK;
 
-	double Se = this->s; // S coodinate of Ego car
-	double Vdes = this->planner.road.speed_limit; // Desired Speed
+	double T2;
+	double delta_v = (desired_speed - Ego.s[1]);
+	if (delta_v < 0) // we are decelerating
+	{
+		T2 = fabs(delta_v) / MAX_DECEL;
+	}
+	else
+	{
+		T2 = delta_v / MAX_ACCEL;
+	}
+
 	
+	// for the d coordinate...Assuptions are: Accel_final = 0 AND also final speed = 0
+	double T3 = Ego.d[2] / MAX_LATERAL_JERK;
+	double T4 = Ego.d[1] / MAX_ACCEL;
+
+	return max(max(max(T1, T2), max(T3, T4)), MIN_MANEUVER_TIME); // This should not be Zero so we can plan..even if we have to plan NOT moving
+}
+
+double SmartVehicle::get_maneuver_accel(Ego_status Ego, double desired_speed, double maneuver_time)
+{
+	// for the S coordinate...Assuptions are: Accel_final = 0
+	double Accel_s = (desired_speed - Ego.s[1]) / maneuver_time;
+	if (Accel_s < 0)
+		Accel_s = max(Accel_s, -MAX_DECEL);
+	else
+		Accel_s = min(Accel_s, MAX_ACCEL);
+
+	// for the d coordinate...We don't care since we HAVE ALL FINAL values we need: d_, d_dot, d_ddot. = target_lane, 0,0
+	// In the case of S we need to calculate target S and therefore we need and Accel, apart from the initial speed and position which we have
+	
+	return Accel_s;
+}
+
+maneuver_params SmartVehicle::generate_follow_params(Road_Vehicle Vehicle_A)
+{	
+	/*
+
+	This following algorithm is based on the Intelligent driver model
+	https://en.wikipedia.org/wiki/Intelligent_driver_model
+
+	*/
+
+	/* These are always our starting conditions (for every cycle).
+	They are the conditions at the end of the last Traj sent to the sim or
+	if we are at time = 0, then they are the Ego speed and position at time
+	NOTE: The decisions made by the planner are made based on ACTUAL ego conditions BUT executed
+	at the END of the previous traj conditions.
+	*/	
+	double E_s  = Ego_start_status.s[0]; // position s
+	double E_vs = Ego_start_status.s[1]; // velocity s
+	double E_as = Ego_start_status.s[2]; // acceleration s
+	double A_s = Vehicle_A.s;
+	double A_vs = Vehicle_A.speed;	
+
+
+	// *************************************************		
+
+	//velocity difference
+	double deltaV = E_vs - A_vs;
+
+	//desired gap to leading vehicle
+	double s_star = MIN_FOLLOW_DISTANCE + 
+					max(E_vs * DESIRED_TIME_GAP_FOLLOWING, 0.0) +
+					((E_vs * deltaV) / (2 * sqrt(MAX_ACCEL * MAX_DECEL)));
+
+	// current gap
+	double s_alpha = A_s - E_s - VEHICLE_SIZE[0];
+	if (s_alpha < 0)  // deal with periodic boundary condition: i.e when we go all around the track and vehicles go back to s = 0;
+	{
+		//cout << " End of the Road???" << endl;
+		s_alpha += this->planner.road.TRACK_LENGTH;
+	}
+
+	double gap_term = pow(s_star / s_alpha, GAMMA);	
+
+	// speed limit Term	
+	double limit_term = pow(E_vs / planner.Vs_desired, DELTA);
+
+	double Temp = (1.0 - limit_term - gap_term);
+	double desired_accel;
+	if (Temp < 0)
+		desired_accel = max(MAX_DECEL * Temp, -MAX_DECEL);
+	else
+		desired_accel = min(MAX_ACCEL * Temp, MAX_ACCEL);
+
+	double duration = max(fabs(desired_accel - E_as) / MAX_JERK, MIN_MANEUVER_TIME);
+	duration = int(duration / dt)*dt; // Truncating
+	double target_s = E_s + (E_vs*duration) + (0.5*desired_accel * duration*duration);
+	double target_vs = E_vs + (desired_accel*duration);
+	// *************************************************
+	
+	maneuver_params params;
+	params.dir = 0;
+	params.target_s = max(target_s,E_s); // For now, I don't want the Ego to backup
+	params.target_speed = min(target_vs, planner.road.speed_limit);
+	params.duration = duration;
+	
+	
+	//cout << "FOLLOW PARAMS: " << endl;
+	//cout << "      dir: " << params.dir << endl;
+	//cout << "      target_s: " << params.target_s << endl;
+	//cout << "      target_speed: " << params.target_speed << endl;
+	//cout << "      duration: " << params.duration << endl;
+	
+	return params;
+}
+
+maneuver_params SmartVehicle::generate_emergency_params(Road_Vehicle Vehicle_A)
+{
+	// For now, just try to follow Vehicle A but slow down 40%
+	Road_Vehicle Dummy = Vehicle_A;
+	Dummy.speed = Dummy.speed*0.6;
+
+	return generate_follow_params(Dummy);		
+}
+
+maneuver_params SmartVehicle::generate_escape_params(Road_Vehicle Vehicle_A)
+{
+	// For now, just try to follow Vehicle A but slow down 10%...to give us a chance to move behind B
+	Road_Vehicle Dummy = Vehicle_A;
+	Dummy.speed = Dummy.speed*0.1;
+
+	return generate_follow_params(Dummy);
+}
+
+maneuver_params SmartVehicle::generate_cruise_control_params(double target_speed)
+{
+
+	/* These are always our starting conditions (for every cycle).
+	They are the conditions at the end of the last Traj sent to the sim or
+	if we are at time = 0, then they are the Ego speed and position at time
+	NOTE: The decisions made by the planner are made based on ACTUAL ego conditions BUT executed
+	at the END of the previous traj conditions.
+	*/
+	double E_s = Ego_start_status.s[0];
+	double E_vs = Ego_start_status.s[1];
+
+	double time = get_maneuver_time(Ego_start_status, target_speed);	
+	double accel = get_maneuver_accel(Ego_start_status, target_speed, time);
+
+	double target_s = max(E_s + E_vs * time + 0.5*accel*time*time, E_s); // Preventing from Negative Speeds generating a pos behind us. Not likely ever
+	//////cout << "   Wait Params: Target_s= " << target_s << " T: " << Time << endl;
+
+	maneuver_params params;
+	params.dir = 0;
+	params.target_s = target_s;
+	params.target_speed = min(target_speed, planner.road.speed_limit);
+	params.duration = time;
+	
+	
+	//cout << "CRUISE PARAMS: " << endl;
+	//cout << "      dir: " << params.dir << endl;
+	//cout << "      target_s: " << params.target_s << endl;
+	//cout << "      target_speed: " << params.target_speed << endl;
+	//cout << "      duration: " << params.duration << endl;
+	
+	return params;
+}
+
+maneuver_params SmartVehicle::generate_change_lane_params(double target_lane, double target_speed)
+{		
+
+	
+	/* These are always our starting conditions (for every cycle).
+	They are the conditions at the end of the last Traj sent to the sim or
+	if we are at time = 0, then they are the Ego speed and position at time
+	NOTE: The decisions made by the planner are made based on ACTUAL ego conditions BUT executed
+	at the END of the previous traj conditions.
+	*/
+	
+	double E_s = Ego_start_status.s[0];
+	double E_vs = Ego_start_status.s[1];
+	double E_d = Ego_start_status.d[0];
+	/*
+	double time_guess = get_maneuver_time(Ego_start_status, target_speed);
+	double accel = fabs(get_maneuver_accel(Ego_start_status, target_speed, time_guess));	
+	*/
+	double accel = MAX_ACCEL/1.5;
+	double speed_ini = planner.Vs_desired; //E_vs; //planner.Vs_desired; // min(target_speed, E_vs);
+	cout << " Ego Speed - ini: " << speed_ini << endl;
+	// Numerical Aproximation of Target S for the lane change (LC) maneuver (Really this is the distance of the maneuver and NOT the total distance. Total s = actual S + manuver S			
+	double lane_width = planner.road.lane_width; ;// fabs(planner.lane2d(target_lane) - E_d); //planner.road.lane_width;
+
+
+	/*
+	For high enough	velocities, (say V ~ 5m / s), it was obvious that the
+	optimal value of D* (distance on S coordinate to performe the maneuver) is approximately proportional to V (initial speed), to
+	the square root of W, and inversely proportional to the
+	square root of A (max Accelration)
+	FROM: Overtaking a Slower-Moving Vehicle by an Autonomous Vehicle -  by T. Shamir
+	*/
+	if (speed_ini < 5) speed_ini = 5;
+
+	double target_s = 2.4 * speed_ini * sqrt(lane_width / accel) ;
+	
+	// Numerical Aproximation of duration of the maneuver in sec.
+	double time = ( sqrt(3)*pow(lane_width, 1.5)*sqrt(accel) / (speed_ini * speed_ini) ) + (target_s / speed_ini) ;
+	
+	target_s += E_s;
+	
+	/*
+	double time = time_guess + 0.2;
+	double target_s = max(E_s + E_vs * time + 0.5*accel*time*time, E_s);
+	*/
+
+	//maneuver_params params;
+	maneuver_params params;
+	params.dir = (target_lane - Ego_start_status.lane);	
+	params.target_s = target_s;
+	params.target_speed = min(target_speed, planner.road.speed_limit);
+	params.duration = time;
+	
+	//cout << "Change lane PARAMS: " << endl;
+	//cout << "      Guessed Time: " << time_guess << endl;
+	//cout << "      Accel: " << accel << endl;
+	//cout << "      dir: " << params.dir << endl;
+	//cout << "      target_s: " << params.target_s << endl;
+	//cout << "      target_speed: " << params.target_speed << endl;
+	//cout << "      duration: " << params.duration << endl;
+
+	return params;
+}
+
+void SmartVehicle::add_lane_change_infront_B_maneuver(Road_Vehicle VehicleB, Road_Vehicle VehicleB2, int target_lane, vector < tuple<Maneuver, maneuver_params > > &possible_maneuvers)
+{
+	double E_s = Ego_start_status.s[0];
+	double E_vs = Ego_start_status.s[1];
+	double B_s = VehicleB.s;
+	double B_vs = VehicleB.speed;
+	double V_desired = planner.Vs_desired;
+
+	double di = fabs(E_s - B_s) - VEHICLE_SIZE[0]; // Assuming both Ego and B cars have roughly the same length				
+
+	if (VehicleB2.empty()) // We can aim at max speed
+	{
+		////cout << "No B2. We can go at max speed" << endl;
+		maneuver_params params_change_lane_no_obstacle = generate_change_lane_params(target_lane, V_desired* LANE_CHANGE_SLOW_DOWN_FACTOR);		
+		double d_min = E_s + (B_vs*(params_change_lane_no_obstacle.duration + 0.5) - di);
+		params_change_lane_no_obstacle.target_s = max(params_change_lane_no_obstacle.target_s, d_min);
+		possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, params_change_lane_no_obstacle));
+		return;
+	}
+	else
+	{
+		////cout << "B2 is present." << endl;
+		maneuver_params params_change_lane_with_obstacle = generate_change_lane_params(target_lane, min(VehicleB2.speed,V_desired* LANE_CHANGE_SLOW_DOWN_FACTOR));				
+		double d_min = E_s + (B_vs*(params_change_lane_with_obstacle.duration + 0.5) - di);
+		params_change_lane_with_obstacle.target_s = max(params_change_lane_with_obstacle.target_s, d_min);
+		if ( params_change_lane_with_obstacle.target_s > (VehicleB2.predict_frenet_at(params_change_lane_with_obstacle.duration).s - MIN_FOLLOW_DISTANCE) )
+		{
+			////cout << "We CAN change lane safely" << endl;
+			possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, params_change_lane_with_obstacle));
+			return;
+		}
+		else
+		{
+			////cout << "We CAN NOT change lane safely -> going to FOLLOWING STATE" << endl;			
+			add_follow_maneuver(possible_maneuvers);
+			return;
+		}
+	}
+}
+
+void SmartVehicle::add_lane_change_behind_B_maneuver(Road_Vehicle VehicleB, int target_lane, vector < tuple<Maneuver, maneuver_params > > &possible_maneuvers)
+{
+	double E_s = Ego_start_status.s[0];
+	double E_vs = Ego_start_status.s[1];
+	double B_s = VehicleB.s;
+	double B_vs = VehicleB.speed;
+	double V_desired = planner.Vs_desired; //Ego_start_status.s[1];// 
+
+	maneuver_params params_change_lane_with_obstacle = generate_change_lane_params(target_lane, min(B_vs, V_desired* LANE_CHANGE_SLOW_DOWN_FACTOR));
+
+	double di = fabs(E_s - B_s) - VEHICLE_SIZE[0]; // Assuming both Ego and B cars have roughly the same length					
+	double d_max = E_s + (B_vs*(params_change_lane_with_obstacle.duration - 0.5) + di);
+
+	params_change_lane_with_obstacle.target_s = min(params_change_lane_with_obstacle.target_s, d_max); // since vehicle B is going slower and is behind us, we need to make sure our final distance when we reach the top speed is actually bigger than this value so we are safe from B hitting or getting too close to us 		
+	possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, params_change_lane_with_obstacle));
+
+	return;
+}
+
+void SmartVehicle::add_follow_maneuver(vector < tuple<Maneuver, maneuver_params > > &possible_maneuvers)
+{
+	possible_maneuvers.push_back(make_tuple(ST_FOLLOW,this->follow_maneuver_params));
+	follow_maneuver_added = true;
+	return;
+}
+
+void SmartVehicle::update_possible_maneuvers(int target_lane, Road_Vehicle Vehicle_A, Road_Vehicle Vehicle_B, Road_Vehicle VehicleB2, vector < tuple<Maneuver, maneuver_params > > &possible_maneuvers)
+{					
 	// Conditions to evaluate in relation to Velocity, Position, TTC and TIV
 	bool Vel_Condition;
 	bool Pos_Condition;
 	bool TTC_condition;
 	bool TIV_condition;
+	bool Extra_condition;
 	bool TransCond; // This is the Full "Transition Condition" (just for convenience)
 
+	double E_s  = Ego_start_status.s[0]; // S coodinate of Ego car at the start of the planning trajectory. Which means 2-3 secs ahead and therefore HORRIBLE APROACH!!!
+	double E_vs = Ego_start_status.s[1];
+	double Vdes = this->planner.Vs_desired ; // Desired Speed = Speed Limit - 0.5mph or 0.22 m/s
+
+	////cout << "EGO       - s: " << E_s << " vs: " << E_vs << " Vdes: " << Vdes << " Accel: " << Ego_start_status.s[2] << endl;
+	// Vehicle A
+	// WE should NOT worry about Vehicle A being Empty..since we look at it before executing this..always!
+	double A_s = Vehicle_A.s;	
+	double A_vs = Vehicle_A.speed; // this is "fair enough"  (as we should be comparing Speeds on S coordinate and not prure magnitudes)aprox since we are assuming that most of the speed vector is on the s direction and just a sliglty portion could go for a change lane.
+	////cout << "Vehicle A - s: " << A_s << " vs: " << A_vs << endl;
 	
-	// FIND NEREST VEHICLES IN EGO'S ADJACENT LANE. Vectors format [ id, x, y, vx, vy, s, d]	
-	vector<vector<double>> filtered_adj_lane = planner.filter_sensor_fusion_by_lane(sensor_fusion, adjLane);
-	vector<double> nearest_adj_lane;
-	planner.nearestAbs(filtered_adj_lane, this->s, nearest_adj_lane);	
+	// Vehicle B 
+	// WE should NOT worry about Vehicle B being Empty..since we look at it before executing this..always!	
+	double B_s = Vehicle_B.s;
+	double B_vs = Vehicle_B.speed; // this is "fair enough"  (as we should be comparing Speeds on S coordinate and not prure magnitudes)aprox since we are assuming that most of the speed vector is on the s direction and just a sliglty portion could go for a change lane.	
+	double B_TTC = Vehicle_B.TTC;
+	double B_TIV = Vehicle_B.TIV;	
+	////cout << "Vehicle B - s: " << B_s << " vs: " << B_vs << endl;
+	////cout << "          TTC: " << B_TTC << " TIV: " << B_TIV << endl;		
+	////cout << "Follow Maneuver Added??:" << follow_maneuver_added << endl;
 
-	// Let's check if we actually have a vehicle on the adjacent lane close to Ego (aka Vehicle B)
-	double Sb = 0.0; // Frenet S distance of vehicle B
-	double Vb = 0.0; // Speed of Vehicle B
-	double di = 0.0; // this is the longitudinal distance between Ego and B (nearest car in adjacent lane) taking into account the vehicle lengths
 	
-	if (!nearest_adj_lane.empty())
-	{
-		double Vb_x = nearest_adj_lane[3];
-		double Vb_y = nearest_adj_lane[4];
-		Vb = sqrt(Vb_x*Vb_x + Vb_y*Vb_y);
-		Sb = nearest_adj_lane[5];
-		di = fabs(this->s - Sb) - this->vechileSize[0]; // Assuming both Ego and B cars have roughly the same length						
-	}
-	
-	double TTC = 1000;
-	if (fabs(this->vs - Vb) > 0.001)
-		TTC = ((this->s - Sb - this->vechileSize[0]) / (Vb - this->vs));
-
-	double TIV = ((this->s - Sb - this->vechileSize[0]) / (Vb));
-
-	// Numerical Aproximation of Target S for the change lane maneuver
-	double target_s = 2.4 * this->vs * sqrt(this->planner.road.lane_width / this->planner.MAX_ACCEL);
-	// Numerical Aproximation of duration of the maneuver in sec.
-	double T = sqrt(3)*pow(this->planner.road.lane_width, 1.5)*sqrt(this->planner.MAX_ACCEL) / (this->vs * this->vs) + (target_s / this->vs); 
-
-	double Accel_s_needed;
-
-	// Transition 1: From ST_WAIT --> ST_LANE_CHANGE
+	// Pre-calculated manuver parameters
+	this->follow_maneuver_params = generate_follow_params(Vehicle_A);		
+		
+	// Transition 1: From ST_FOLLOW --> ST_LANE_CHANGE
 	/*
 	This is the case where vehicle b has the fastest velocity and already driving
 	longitudinally in front of the ego vehicle. In this case, a normal optimized lane
 	change trajectory should be initiated i.e. the trajectory designed for the case
-	where there is no obstacle
+	where there is no obstacle...unless Vechicle B2 is present
 	*/
-	Vel_Condition = (Va < Vdes && Vdes < Vb);
-	Pos_Condition = (Sb > this->s + this->vechileSize[0]);
+	Vel_Condition = (A_vs < Vdes && Vdes < B_vs);
+	Pos_Condition = (B_s > E_s + VEHICLE_SIZE[0]);
 	TTC_condition = true;
 	TIV_condition = true;
 	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
-	Accel_s_needed = 0.0; // Lane change without obstacles. 
-	if (TransCond)
-	{
-
-		possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, dir));
+	if (TransCond) 
+	{		
+		////cout << "Transition 1: From ST_FOLLOW --> ST_LANE_CHANGE Leading Vehicle b" << endl;
+		add_lane_change_infront_B_maneuver(Vehicle_B, VehicleB2, target_lane, possible_maneuvers);
+		return;
 	}
 
-	// Transition 2: From ST_WAIT --> ST_WAIT	
-	Vel_Condition = (Va < Vdes && Vdes < Vb);
-	Pos_Condition = (Sb < this->s + this->vechileSize[0]) && (Sb > this->s - this->vechileSize[0]);
+	// Transition 2: From ST_FOLLOW --> ST_FOLLOW	
+	/* in this case, since vehicle B is driving at a higher speed than everybody else, and is within 1 car distance beside Ego,
+	   Ego vehicle should wait until vehicle b pass before making a lane change menuver
+	*/
+	Vel_Condition = (A_vs < Vdes && Vdes < B_vs);
+	Pos_Condition = (B_s < E_s + VEHICLE_SIZE[0]) && (B_s > E_s - VEHICLE_SIZE[0]);
 	TTC_condition = true;
 	TIV_condition = true;
 	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
-	if (TransCond)
-		possible_maneuvers.push_back(make_tuple(ST_WAIT, 0));
-
-	// Transition 3: From ST_WAIT --> ST_LANE_CHANGE with vEf = vb, Lead Vehicle b after lane change	
-	Vel_Condition = (Va < Vdes && Vdes < Vb && Vb - Va < this->planner.Vt);
-	Pos_Condition = (Sb < this->s - this->vechileSize[0] && target_s > (Vb*(T+0.5) - di));
-	TTC_condition = (TTC > 1.0);
-	TIV_condition = (TIV > 0.5);
-	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
-	if (TransCond)
-		possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, dir));
-
-	// Transition 4: From ST_WAIT --> ST_WAIT (Otherwise)	
-	Vel_Condition = (Va < Vdes && Vdes < Vb);
-	Pos_Condition = true;
-	TTC_condition = (TTC < 1.0);
-	TIV_condition = (TIV < 0.5);
-	TransCond = (Vel_Condition && Pos_Condition && (TTC_condition || TIV_condition));
-	if (TransCond)
-		possible_maneuvers.push_back(make_tuple(ST_WAIT, 0));
-
-	// Transition 5: From ST_WAIT --> ST_LANE_CHANGE
-	Vel_Condition = (Va < this->vs && this->vs < Vb && Vb < Vdes);
-	Pos_Condition = (Sb > this->s + this->vechileSize[0] && target_s < Vb*T-0.5*this->vs + di);
-	TTC_condition = true;
-	TIV_condition = true;
-	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
-	if (TransCond)
-		possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, dir));
-
-	// Transition 6: From ST_WAIT --> ST_WAIT
-	Vel_Condition = (Va < this->vs && this->vs < Vb && Vb < Vdes);
-	Pos_Condition = (Sb < this->s + this->vechileSize[0]) && (Sb > this->s - this->vechileSize[0]);
-	TTC_condition = true;
-	TIV_condition = true;
-	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
-	if (TransCond)
-		possible_maneuvers.push_back(make_tuple(ST_WAIT, 0));
-
-	// Transition 7: From ST_WAIT --> ST_LANE_CHANGE with vEf = Vmax, Lead Vehicle b after lane change	
-	Vel_Condition = (Va < this->vs && this->vs < Vb && Vb < Vdes);
-	Pos_Condition = (Sb < this->s - this->vechileSize[0]);
-	TTC_condition = (TTC > 1.0);
-	TIV_condition = (TIV > 0.5);
-	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
-	if (TransCond)
-		possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, dir));
-
-	// Transition 8: From ST_WAIT --> ST_WAIT (Otherwise)
-	Vel_Condition = (Va < this->vs && this->vs< Vb && Vb < Vdes);
-	Pos_Condition = true;
-	TTC_condition = (TTC < 1.0);
-	TIV_condition = (TIV < 0.5);
-	TransCond = (Vel_Condition && Pos_Condition && (TTC_condition || TIV_condition));
-	if (TransCond)
-		possible_maneuvers.push_back(make_tuple(ST_WAIT, 0));
-
-	// Transition 9: From ST_WAIT --> ST_WAIT	
-	Vel_Condition = (Vb < Va && Va < Vdes);
-	Pos_Condition = (Sb >= this->s );
-	TTC_condition = true;
-	TIV_condition = true;
-	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
-	if (TransCond)
-		possible_maneuvers.push_back(make_tuple(ST_WAIT, 0));
-
-
-	// Transition 10: From ST_WAIT --> ST_LANE_CHANGE	
-	Vel_Condition = (Vb < Va && Va < Vdes);
-	Pos_Condition = (Sb < this->s);
-	TTC_condition = true;
-	TIV_condition = true;
-	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
-	if (TransCond)
-		possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, dir));
-
-	// Transition 11: From ST_WAIT --> ST_LANE_CHANGE
-	
-	Vel_Condition = (Va < Vb && Vb < this->vs && this->vs < Vdes);
-	Pos_Condition = (Sb > this->s + this->vechileSize[0] && target_s< (Vb*(T-0.5)+ di));
-	TTC_condition = true;
-	TIV_condition = (TIV > 0.5);
-	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
-	if (TransCond)
-		possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, dir));
-
-	// Transition 12: From ST_WAIT --> ST_WAIT
-	Vel_Condition = (Va < Vb && Vb < this->vs && this->vs < Vdes);
-	Pos_Condition = (Sb < this->s + this->vechileSize[0]) && (Sb > this->s - this->vechileSize[0]);
-	TTC_condition = true;
-	TIV_condition = true;
-	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
-	if (TransCond)
-		possible_maneuvers.push_back(make_tuple(ST_WAIT, 0));
-
-	// Transition 13: From ST_WAIT --> ST_LANE_CHANGE	
-	Vel_Condition = (Va < Vb && Vb < this->vs && this->vs < Vdes);
-	Pos_Condition =  (Sb < this->s - this->vechileSize[0]);
-	TTC_condition = true;
-	TIV_condition = true;
-	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
-	if (TransCond)
-		possible_maneuvers.push_back(make_tuple(ST_LANE_CHANGE, dir));
-}
-
-void SmartVehicle::get_vehicle_infront_data(vector<vector<double>> sensor_fusion, vector<double> &VehicleA)
-{
-	// FIND NEREST VEHICLES IN EGO'S SAME LANE. Vector's format [ id, x, y, vx, vy, s, d]	
-	vector<vector<double>> filtered_same_lane = this->planner.filter_sensor_fusion_by_lane(sensor_fusion, this->lane);
-	vector<double> nearest_same_lane;
-	this->planner.nearestAbs(filtered_same_lane, this->s, nearest_same_lane);
-	cout << "6 - Same lane filtered: " << nearest_same_lane.size() << endl;
-
-	double Va = 0.0; // Speed of the car infront of Ego
-	double TTC_a = 1000.0; // Time To Collision with vehicle infront of us (Aka Vhicle a).
-	double TIV_a = 1000.0; // Inter-Vehicular time (Aka Vhicle a).
-
-
-	if (!nearest_same_lane.empty() && nearest_same_lane[5] > this->s)
-	{
-		double Va_x = nearest_same_lane[3];
-		double Va_y = nearest_same_lane[4];
-		double Sa = nearest_same_lane[5];
-		Va = sqrt(Va_x*Va_x + Va_y*Va_y);
-		if ( (fabs(this->vs - Va) > 0.001) && (this->vs > Va) )
-			TTC_a = ((Sa - this->s - this->vechileSize[0]) / fabs(this->vs - Va));
-
-		TIV_a = ((Sa - this->s - this->vechileSize[0]) / Va);
-		cout << "7 - Same lane NOT empty: Va = " << Va << " TTC-a: " << TTC_a << " TIV-a: " << TIV_a << endl;
+	if (TransCond && !follow_maneuver_added)
+	{		
+		////cout << "Transition 2: From ST_FOLLOW --> ST_FOLLOW" << endl;		
+		add_follow_maneuver(possible_maneuvers);
+		return;
 	}
-	VehicleA.clear();
-	VehicleA.push_back(Va);
-	VehicleA.push_back(TTC_a);
-	VehicleA.push_back(TIV_a);
+
+	// Transition 3: From ST_FOLLOW --> ST_LANE_CHANGE, Lead Vehicle b after lane change
+	/* Similar case than before, but now B is behind ego, at least by one car distance. If the TTC and TIV condicions are met,
+	   Ego could iniciate an lane change ahead from B
+	*/
+	Vel_Condition = (A_vs < Vdes && Vdes < B_vs );
+	Pos_Condition = (B_s < E_s - VEHICLE_SIZE[0]);
+	TTC_condition = (B_TTC > MIN_TTC);
+	TIV_condition = (B_TIV > MIN_TIV);
+	Extra_condition =(B_vs - A_vs < RELATIVE_VELOCITY_THRESHOLD);
+	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition && Extra_condition);
+	if (TransCond)
+	{		
+		////cout << "Transition 3: From ST_FOLLOW --> ST_LANE_CHANGE Leading Vehicle b" << endl;
+		add_lane_change_infront_B_maneuver(Vehicle_B, VehicleB2, target_lane, possible_maneuvers);
+		return;
+	}
+
+	// Transition 4: From ST_FOLLOW --> ST_FOLLOW (Otherwise)	
+	/*	this case is when vehicle b is driving with a higher speed
+		than the ego vehicle very closely. In this case, a command of wait is given
+		until the vehicle b passed the ego vehicle and then initiate a lane change command
+	*/
+    //Vel_Condition = A_vs < Vdes && Vdes < B_vs) ;
+	Pos_Condition = true;
+	//TTC_condition = (B_TTC < MIN_TTC);
+	//TIV_condition = (B_TIV < MIN_TIV);
+	TransCond = (Vel_Condition && Pos_Condition && (!TTC_condition || !TIV_condition || !Extra_condition));
+	if (TransCond && !follow_maneuver_added)
+	{
+		////cout << "Transition 4: From ST_FOLLOW --> ST_FOLLOW (Otherwise)" << endl;		
+		add_follow_maneuver(possible_maneuvers);
+		return;
+	}
+
+	// Transition 5: From ST_FOLLOW --> ST_LANE_CHANGE
+	/* Here, this is the case very similar to Transition 1. However, the difference is the ego
+	   vehicle wants to drive at a speed faster than vehicle b. In this case,
+       still make an acceleration lane change but with the final velocity equal to the
+       vehicle b and following behind it. Since we are going behind B, we don't really have to care about B2
+	*/
+	Vel_Condition = (A_vs < E_vs && E_vs < B_vs && B_vs < Vdes);
+	Pos_Condition = (B_s > E_s + VEHICLE_SIZE[0]);
+	TTC_condition = true;
+	TIV_condition = true;
+	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
+	if (TransCond)
+	{
+		////cout << "Transition 5: From ST_FOLLOW --> ST_LANE_CHANGE Behind Vehicle b " << endl;
+		add_lane_change_behind_B_maneuver(Vehicle_B, target_lane, possible_maneuvers);
+		return;
+	}
+
+	// Transition 6: From ST_FOLLOW --> ST_FOLLOW
+	/* In this case, since the velocity of vehicle b is higher, ego vehicle should just
+	   choose to wait until vehicle b pass. And then, it enters into the case of Transition 5
+	   where an acceleration lane change maneuver will be initiated.
+	*/
+	Vel_Condition = (A_vs < E_vs && E_vs < B_vs && B_vs < Vdes);
+	Pos_Condition = (B_s < E_s + VEHICLE_SIZE[0]) && (B_s > E_s - VEHICLE_SIZE[0]);
+	TTC_condition = true;
+	TIV_condition = true;
+	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
+	if (TransCond && !follow_maneuver_added)
+	{
+		////cout << "Transition 6: From ST_FOLLOW --> ST_FOLLOW" << endl;				
+		add_follow_maneuver(possible_maneuvers);
+		return;
+	}
+
+	// Transition 7: From ST_FOLLOW --> ST_LANE_CHANGE Lead Vehicle b	
+	/* Similar to the case of Event 3, but since vehicle b is driving at a slower velocity
+	   than the desired velocity set by the driver, an acceleration lane change maneuver
+       should be initiated with the nal velocity of the ego vehicle equal to the desired
+       velocity.
+	*/
+	Vel_Condition = (A_vs < E_vs && E_vs < B_vs && B_vs < Vdes);
+	Pos_Condition = (B_s < E_s - VEHICLE_SIZE[0]);
+	TTC_condition = (B_TTC > MIN_TTC);
+	TIV_condition = (B_TIV > MIN_TIV);
+	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
+	if (TransCond)
+	{		
+		////cout << "Transition 7: From ST_FOLLOW --> ST_LANE_CHANGE Leading Vehicle b" << endl;
+		add_lane_change_infront_B_maneuver(Vehicle_B, VehicleB2, target_lane, possible_maneuvers);
+		return;
+	}
+
+	// Transition 8: From ST_FOLLOW --> ST_FOLLOW (Otherwise)
+	Vel_Condition = (A_vs < E_vs && E_vs < B_vs && B_vs < Vdes);
+	Pos_Condition = true;
+	TTC_condition = (B_TTC < MIN_TTC);
+	TIV_condition = (B_TIV < MIN_TIV);
+	TransCond = (Vel_Condition && Pos_Condition && (TTC_condition || TIV_condition));
+	if (TransCond && !follow_maneuver_added)
+	{
+		////cout << "Transition 8: From ST_FOLLOW --> ST_FOLLOW (Otherwise)" << endl;	
+		add_follow_maneuver(possible_maneuvers);
+		return;
+	}
+
+	// Transition 9: From ST_FOLLOW --> ST_FOLLOW
+	/* Since the vehicle b is driving at the lowest speed among the three vehicles, if
+	   the vehicle b is leading the ego vehicle, then the ego vehicle can just wait until, both Ego and A 
+       passed vehicle B...and then Ego can initiate a lane change maneuver
+	*/
+	Vel_Condition = (B_vs < A_vs && A_vs < Vdes);
+	Pos_Condition = (B_s >= E_s);
+	TTC_condition = true;
+	TIV_condition = true;
+	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
+	if (TransCond && !follow_maneuver_added)
+	{		
+		////cout << "Transition 9: From ST_FOLLOW --> ST_FOLLOW" << endl;		
+		add_follow_maneuver(possible_maneuvers);
+		return;
+	}
+
+	// Transition 10: From ST_FOLLOW --> ST_LANE_CHANGE	
+	/*
+	Now the vehicle b is surpassed by the ego vehicle or, in other words, the ego vehicle
+	is leading, then a normal optimized lane change trajectory can be generated
+	*/
+	Vel_Condition = (B_vs < A_vs && A_vs < Vdes);
+	Pos_Condition = (E_s > B_s);
+	TTC_condition = true;
+	TIV_condition = true;
+	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
+	if (TransCond)
+	{
+		////cout << "Transition 10: From ST_FOLLOW --> ST_LANE_CHANGE Leading Vehicle b" << endl;
+		add_lane_change_infront_B_maneuver(Vehicle_B, VehicleB2, target_lane, possible_maneuvers);
+		return;
+	}
+
+	// Transition 11: From ST_FOLLOW --> ST_LANE_CHANGE
+	/* Although both vehicle a and vehicle b are driving at a slower velocity than the
+	desired velocity, the adjacent lane i.e. the lane of vehicle b is
+	still faster than the current lane. Thus, a lane change maneuver is recommended,
+	but the final velocity of the ego vehicle should equal to the velocity of vehicle
+	b. Thus, this is a deceleration lane change maneuver
+	*/
+	Vel_Condition = (A_vs < B_vs && B_vs < E_vs );
+	Pos_Condition = (B_s > E_s + VEHICLE_SIZE[0]);
+	TTC_condition = true;
+	TIV_condition = B_TIV > MIN_TIV; // This will allow me to make sure I can really fit behind B and slow down
+	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
+	if (TransCond)
+	{
+		////cout << "Transition 11: From ST_FOLLOW --> ST_LANE_CHANGE Behind Vehicle b (decel)" << endl;
+		add_lane_change_behind_B_maneuver(Vehicle_B, target_lane, possible_maneuvers);
+		return;
+	}
+	/*
+	else if (Vel_Condition && Pos_Condition && TTC_condition && !follow_maneuver_added)
+	{
+		// We made all the requirements Vehicle B is violating the TIV condition
+		// If we wait until it's slighly further away we should be able to initiate a change lane maneuver
+		////cout << "Transition 11 BBBBB - ALMOST: From ST_FOLLOW --> ST_FOLLOW" << endl;
+		add_follow_maneuver(possible_maneuvers);
+		return;
+	}
+	*/
+
+	// Transition 12: From ST_FOLLOW --> ST_FOLLOW
+	/* In this case, the decision making can be depending on the type of driver. Some drivers
+       might want to have an acceleration lane change trajectory while some drivers
+       prefer to wait until the vehicle b pass and then do the lane change. Here, to be
+       more conservative and ensuring safety, system recommends wait and then make
+       the lane change.
+	*/
+	Vel_Condition = (A_vs < B_vs && B_vs < E_vs );
+	Pos_Condition = (B_s < E_s + VEHICLE_SIZE[0]) && (B_s > E_s - VEHICLE_SIZE[0]);
+	TTC_condition = true;
+	TIV_condition = true;
+	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
+	if (TransCond && !follow_maneuver_added)
+	{
+		////cout << "Transition 12: From ST_FOLLOW --> ST_FOLLOW" << endl;		
+		add_follow_maneuver(possible_maneuvers);
+		return;
+	}
+
+	// Transition 13: From ST_FOLLOW --> ST_LANE_CHANGE 
+	/*
+	In this case, since vehicle is already behind the ego vehicle and driving at a
+	slower velocity than the ego vehicle, a lane change maneuver should be initiated..Leading B
+	*/
+	Vel_Condition = (A_vs < B_vs && B_vs < E_vs);
+	Pos_Condition =  (B_s < E_s - VEHICLE_SIZE[0]);
+	TTC_condition = true;
+	TIV_condition = true;
+	TransCond = (Vel_Condition && Pos_Condition && TTC_condition && TIV_condition);
+	if (TransCond)
+	{
+		////cout << "Transition 13: From ST_FOLLOW --> ST_LANE_CHANGE Leading Vehicle b" << endl;
+		add_lane_change_infront_B_maneuver(Vehicle_B, VehicleB2, target_lane, possible_maneuvers);
+		return;
+	}
+
+	if (possible_maneuvers.empty())
+	{
+		/* It turns out that when we first move into following state, Ego came from Cruise control and
+		its speed was higher than A (that's why we went to Follow). But if ego could NOT change lane
+		it will get into the situation where its speed will be "around" A's..sometimes even slower (numerical calc errors).
+		The fluctuation below/above A speed can make possible not fitting any transition.
+		Also this would happen if all cars come to the point that are at the same speed.
+		For this reason, Keep following A and waiting for a slight change on the speed conditions 
+		is the only way, unless we design a smarter behavioral planner that takes into account other lanes
+		beyond the left/right ones from us. For now, I'll stick with this
+		*/
+		////cout << "*****************************************************" << endl;
+		////cout << "Transition Unkown!!" << endl;		
+		add_follow_maneuver(possible_maneuvers);
+		return;
+	}
 }
 
-void SmartVehicle::generate_best_trajectory(vector<vector<double>> sensor_fusion, vector<double> VehicleA, vector < tuple<State, int > > possible_maneuvers, vector<double> &best_trajectory, State &Ego_new_state)
+Trajectory SmartVehicle::generate_best_trajectory(vector<Road_Vehicle> road_vehicles, vector < tuple<Maneuver, maneuver_params > > possible_maneuvers)
 {
+	//////cout << "****************************************************************" << endl;
+	//////cout << "*******************Generating Best Trajectory ******************" << endl;	
 	/*
 	Let's actually calculate the COST associated to each "possible maneuver"
 	Steps to perform:
@@ -593,464 +991,150 @@ void SmartVehicle::generate_best_trajectory(vector<vector<double>> sensor_fusion
 	7) Create the next_x_vals and next_y_vals (thats on the next function - smooth_trajectory)
 	*/
 
-	double Va = VehicleA[0];
-	double TTC_a = VehicleA[1];
-	double TIV_a = VehicleA[2];
-
+	/*
+	I WILL BUILD THE TRAJECTORY STARTING FROM WHERE THE LAST TRAJ LEFT...
+	*/
+	
 	// Let's start by building our Initial Vectors
-	vector<double> start_s = planner.start_s;
-	vector<double> start_d = planner.start_d;
+	//vector<double> start_s = { planner.start_s[0], planner.start_s[1], planner.start_s[2] };
+	//vector<double> start_d = { planner.start_d[0], planner.start_d[1], planner.start_d[2] };	
+	vector<double> start_s = Ego_start_status.s;
+	vector<double> start_d = Ego_start_status.d;
 
-	double Max_speed = this->planner.road.speed_limit - 0.22; // m/s - always 0.5 mph below the limit 	
-	double Max_accel = this->planner.MAX_ACCEL * 0.90; // m/s2 - 
+	//////cout << "1 - Start: s = " << start_s[0] << " s_dot = " << start_s[1] << " s_ddot = " << start_s[2] << endl;
+	//////cout << "2 -        d = " << start_d[0] << " d_dot = " << start_d[1] << " d_ddot = " << start_d[2] << endl;
 
 	vector<double> goal_s;
 	vector<double> goal_d;
 	vector<double> costs; // Vector that will store the BEST cost for each possible state. Each possible state would have a few trajectories to test
-	vector<vector<double>> trajectories;
-	vector<State> associated_maneuver; // I'll store here the associated maneuver to a trajectory. That way, once i have the "Best" Traj, i can update the Ego State (aka maneuver)
-
-	double target_s; // just the s value..for convenience use
-	double Accel_s_needed; //Accel needed to achieve our target_s with our initial conditions and limitations. 
-	double T; // Duration of the Maneuver
-	double target_d;
-
+	vector<Trajectory> trajectories;	
+	
+	//double Ego_as_needed; //Accel needed to achieve our target_s with our initial conditions and limitations. 
+	
+	double target_d;   
 	for (auto test_maneuver : possible_maneuvers)
 	{
-		State test_maneuver_name;
-		int dir;
-		std::tie(test_maneuver_name, dir) = test_maneuver;
-		cout << "test_maneuver_name: " << test_maneuver_name << endl;
-		cout << "dir: " << dir << endl;
-		target_d = this->planner.lane2d(this->lane + dir); // Our d coordinate target is always the center of the lane
-		switch (test_maneuver_name)
-		{
-			case ST_WAIT: // The only reason we are here is because we got too close to Vehicle A (TTC_a < 1 and TIV_a < 0.5)
-			{
-				// We need to slow down and maintain a safe distance with vehicle A (in front) until we can pass
-				//
-				T = TTC_a; // we will plan for the time it will take us to reach A				
-				cout << "stop 17" << endl;
-				Accel_s_needed = min((Va - this->vs) / T, -Max_accel);
-				target_s = this->s + this->vs*T + 0.5*Accel_s_needed*T*T - this->planner.BUFFER_DISTANCE;
-				goal_s = { target_s, Va, 0 };
-				goal_d = { target_d, 0, 0 };
-				break;
-			}
+		// Let's extract the data from the test maneuver		
+		Maneuver test_maneuver_id; // = std::get<0>(test_maneuver);
+		maneuver_params params; // = std::get<1>(test_maneuver);
+		std::tie(test_maneuver_id, params) = test_maneuver;		
 
-			case ST_CRUISE_CONTROL:
-			{
-				// We need just to mantain a constant speed as close to the MAX legal speed as possible				
-				//
-				T = (Max_speed) / Max_accel; // we will plan a path for a few sec ahead: Worst case scenario is the time taken to go from 0m/s to max speed WITHOUT breaking the Accel Rule 
-				cout << "stop 18" << endl;
-				Accel_s_needed = min((Max_speed - this->vs) / T, Max_accel);
-				target_s = this->s + this->vs*T + 0.5*Accel_s_needed*T*T;
-				goal_s = { target_s, Max_speed, 0 };
-				goal_d = { target_d, 0, 0 };
+		int dir = params.dir;		
+		double target_s = params.target_s;
+		double target_vs = params.target_speed;
+		double goal_duration = params.duration; // Duration of the Maneuver
+		target_d = this->planner.lane2d(Ego_start_status.lane + dir); // Our d coordinate target is always the center of the lane
 
-				break;
-			}
+		////cout << "Maneuver ID: " << test_maneuver_id << endl;		
+		////cout << "    target_s: " << target_s << endl;
+		////cout << "    dir: " << dir << " target_d: " << target_d << endl;
+		////cout << "    target_Speed: " << target_vs << endl;
+		////cout << "    duration: " << goal_duration << endl; // Duration Target
 
-			case ST_LANE_CHANGE:
-			{
-				// We will change lane
-				// it can be proven that with high enough velocity, the optimal solutions for the problem can be obtained
-				// with a Numerical aprox based on:																					
-				target_s = 2.4 * this->vs * sqrt(this->planner.road.lane_width / Max_accel);    // Numerical Aproximation of Target S for the change lane maneuver								
-				target_s += this->s;
-				T = sqrt(3)*pow(this->planner.road.lane_width, 1.5)*sqrt(Max_accel) / (this->vs * this->vs) + (target_s / this->vs); // duration of the maneuver in sec.				
-				goal_s = { target_s, Max_speed, 0 };				
-				goal_d = { target_d, 0, 0 };
+		
+		goal_s = { target_s, target_vs, 0 };
+		goal_d = { target_d, 0, 0 };
 
-				break;
-			}
-
-			default:
-			{
-				cout << "Strange default" << endl;
-				break;
-			}
-		}
-
-		cout << "19 - Maneuver Params: T = " << T << " target_S = " << goal_s[0] << " target_d = " << goal_d[0] << " target Speed = " << goal_s[1] << " target Acc = " << goal_s[2] << endl;
-
-		vector<vector<double>> trajectories_per_state = this->planner.PTG(start_s, start_d, goal_s, goal_d, T);
+	   //////cout << "Going to PTG " << endl;
+	
+		vector<Trajectory> trajectories_per_state = this->planner.PTG(test_maneuver_id, start_s, start_d, goal_s, goal_d, goal_duration);
 		vector<double> costs_per_state;
-
-		cout << "stop - PTG returned all trajectories for a single state. Num Traj per State: " << trajectories_per_state.size() << endl;
-
+		
 		for (auto trajectory : trajectories_per_state)
 		{
-			double cost = this->planner.calculate_cost(trajectory, sensor_fusion, goal_s, goal_d, T, this->vechileSize[1]);
+			double cost = this->planner.calculate_cost(trajectory, road_vehicles, goal_s, goal_d, goal_duration);
 			costs_per_state.push_back(cost);
-			//cout << "Cost: " << cost << endl;
+			cout << "Cost for maneuver: " << trajectory.maneuver << " is: " << cost << endl;
 		}
 
-		cout << "Calc Cost Finished for Trajecs for single state. Costs Added for this state:" << costs_per_state.size() << endl;
-		// Until this point we have all the costs for This specific State (with its multiple trajectories)
+		//////cout << "Calc Cost Finished for Trajecs for single state. Costs Added for this state:" << costs_per_state.size() << endl;
+		// Until this point we have all the costs for This specific Maneuver (with its multiple trajectories)
 		vector<double>::iterator it = min_element(costs_per_state.begin(), costs_per_state.end());
 		int BestCostIdx = std::distance(costs_per_state.begin(), it);
-		cout << "BestCostIdx: " << BestCostIdx << endl;
+		//////cout << "BestCostIdx: " << BestCostIdx << endl;
 		costs.push_back(costs_per_state[BestCostIdx]);
-		cout << "Best Cost Added to Costs: " << costs_per_state[BestCostIdx] << endl;
+		//////cout << "Best Cost Added to Costs: " << costs_per_state[BestCostIdx] << endl;
 		trajectories.push_back(trajectories_per_state[BestCostIdx]);
-		associated_maneuver.push_back(test_maneuver_name);
-		cout << "Best Traj Added to Traj" << endl;
+
+		
+		//////cout << "Best Traj Added to Traj" << endl;
 	}
 
-	cout << "Num Best Traj:" << trajectories.size() << endl;
-	cout << "Num Best cost:" << costs.size() << endl;
-	// No we should have only 1 (best) cost per State and with a correlating vector of trajectories
+	//////cout << "Num Best Traj:" << trajectories.size() << endl;
+	//////cout << "Num Best cost:" << costs.size() << endl;
+	// No we should have only 1 (best) cost per Maneuver and with a correlating vector of trajectories
 	// Let's now calculate the very Best trajectory
 	vector<double>::iterator it = min_element(costs.begin(), costs.end());
 	int BestCostIdx = std::distance(costs.begin(), it);
-	cout << "BestCostIdx: " << BestCostIdx << endl;
-	cout << "Winner Traj Time Len: " << trajectories[BestCostIdx][12] << endl;
+	//////cout << "BestCostIdx: " << BestCostIdx << endl;
+	//////cout << "Winner Traj Time Len: " << trajectories[BestCostIdx].duration << endl;			
+
+	cout << "BEST TRAJ " << endl;
+	cout << "    MANEUVER:  " << trajectories[BestCostIdx].maneuver << endl;
+	cout << "    start_s:  " << trajectories[BestCostIdx].start_s[0] << endl;
+	cout << "    start_vs: " << trajectories[BestCostIdx].start_s[1] << endl;
+	cout << "    start_as: " << trajectories[BestCostIdx].start_s[2] << endl;
+	cout << "    start_d:  " << trajectories[BestCostIdx].start_d[0] << endl;
+	cout << "    start_vd: " << trajectories[BestCostIdx].start_d[1] << endl;
+	cout << "    start_ad: " << trajectories[BestCostIdx].start_d[2] << endl;
+	cout << "    goal_s:   " << trajectories[BestCostIdx].goal_s[0] << endl;
+	cout << "    goal_vs:  " << trajectories[BestCostIdx].goal_s[1] << endl;
+	cout << "    goal_as:  " << trajectories[BestCostIdx].goal_s[2] << endl;
+	cout << "    goal_d:   " << trajectories[BestCostIdx].goal_d[0] << endl;
+	cout << "    goal_vd:  " << trajectories[BestCostIdx].goal_d[1] << endl;
+	cout << "    goal_ad:  " << trajectories[BestCostIdx].goal_d[2] << endl;
+	cout << "    Duration: " << trajectories[BestCostIdx].duration << endl;
+
 	
-	best_trajectory = trajectories[BestCostIdx];
-	Ego_new_state = associated_maneuver[BestCostIdx];
+	return trajectories[BestCostIdx];
 }
 
-void SmartVehicle::smooth_trajectory(vector<double> trajectory, vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals)
+void SmartVehicle::smooth_trajectory_frenet2(Trajectory trajectory, vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals)
 {
-	cout << "********* TRAJECTORY SMOOTHER ************" << endl;
-	// ********* TRAJECTORY SMOOTHER ************
-	
-	vector<double> new_path_x;
-	vector<double> new_path_y;
-	
-	double last_x;
-	double last_y;
-	double last_yaw;
-	double x_prev;
-	double y_prev;
-
-	/*
-	We need to know what's actually the Ego motion state. We know it's location ans Speed and yaw but we are missing it's accel.
-	We need the accel to make sure that once we "stich" the next trajectory, it will transtion smoothly. We need to locate the next
-	2 points in such a way that speed and accel transtion smoothly.
-	*/
-	int prev_path_size = prev_x_vals.size();
-	cout << "prev_path_size " << prev_path_size << endl;
-	if (prev_path_size < 2)
-	{		
-		cout << "point 1 "  << endl;
-		
-		last_x = this->x;
-		last_y = this->y;		
-		last_yaw = deg2rad(this->yaw);
-
-		x_prev = last_x - cos(last_yaw);
-		y_prev = last_y - sin(last_yaw);
-
-		
-		
-	}
-	else
-	{
-		cout << "going through x1-x2 " << endl;
-
-		int start_idx = prev_path_size;
-		last_x = prev_x_vals[start_idx - 1];
-		last_y = prev_y_vals[start_idx - 1];
-
-		x_prev = prev_x_vals[start_idx - 2];
-		y_prev = prev_y_vals[start_idx - 2];
-
-		last_yaw = atan2((last_y - y_prev),(last_x - x_prev));		
-	}
-	//add previous
-	new_path_x.push_back(x_prev);
-	new_path_y.push_back(y_prev);
-	cout << "1 x= " << x_prev << " y= " << y_prev << endl;
-
-	//add actual
-	new_path_x.push_back(last_x);
-	new_path_y.push_back(last_y);
-	cout << "2 x= " << last_x << " y= " << last_y << endl;
-
-	
-	// Let's extract the coefficient from the trajectory that we'll need later
-	vector<double> s_coeff;
-	std::copy(trajectory.begin(), trajectory.begin() + 6, std::back_inserter(s_coeff));
-
-	vector<double> d_coeff;
-	std::copy(trajectory.begin() + 6, trajectory.begin() + 12, std::back_inserter(d_coeff));
-
-	double T = trajectory[12]; // time duration of the Best Trajectory Generated
-	
-	int num_anchor_points = 10;
-	double dt = T / num_anchor_points; // (prev_path_size / 3)); // let's add 1/3 of the new JMT trajectory	
-
-	for (int i = 1; i <= num_anchor_points; i++)
-	{
-		double at_time = i*dt;
-		double s = evaluate(s_coeff, at_time);
-		double d = evaluate(d_coeff, at_time);
-		cout << i << " s= " << s << " d= " << d << endl;
-		vector<double> next_wp = this->planner.getXY(s, d, this->planner.road.map_waypoints_s, this->planner.road.map_waypoints_x, this->planner.road.map_waypoints_y);		
-		new_path_x.push_back(next_wp[0]);
-		new_path_y.push_back(next_wp[1]);
-		cout << i << " x= " << next_wp[0] << " y= " << next_wp[1] << endl;
-	}
-
-	
-	int new_path_len = new_path_x.size();
-	for (size_t i = 0; i < new_path_len; i++)
-	{
-		double shift_x = new_path_x[i] - last_x;
-		double shift_y = new_path_y[i] - last_y;
-		
-		new_path_x[i] = (shift_x * cos(0 - last_yaw) - shift_y * sin(0 - last_yaw));
-		new_path_y[i] = (shift_x * sin(0 - last_yaw) + shift_y * cos(0 - last_yaw));
-	}
-
-	
-	// Now we create a smooth spline
-	cout << "Creating Spline. new_path_points (x): " << new_path_len << " (y): " << new_path_y.size() << endl;
-	tk::spline spl;
-	spl.set_points(new_path_x, new_path_y);
-
-	vector<double> goal_s;
-	std::copy(trajectory.begin() + 13, trajectory.begin() + 16, std::back_inserter(goal_s));
-
-	double target_x = new_path_x[new_path_len - 1];// goal_s[0];
-	double target_y = spl(target_x);
-	double target_dist = sqrt(target_x*target_x + target_y*target_y);
-	double target_vs = goal_s[1];
-
-	double N = target_dist / (target_vs * this->planner.dt);
-	double x_final = 0;
-	double y_final;
-	cout << "Spline divided in (N): " << N << endl;
-
-	for (size_t i = 0; i < 100; i++)
-	{
-		x_final += target_x / N;
-		y_final = spl(x_final);
-
-		double x_point = last_x + (x_final * cos(last_yaw) - y_final * sin(last_yaw));
-		double y_point = last_y + (x_final * sin(last_yaw) + y_final * sin(last_yaw));
-		
-		next_x_vals.push_back(x_point);
-		next_y_vals.push_back(y_point);
-
-	}
-		
-	cout << "Sending next Path len = " << next_x_vals.size() << endl;
-}
-
-void SmartVehicle::cruise_control(vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals)
-{
-	cout << "********* TRAJECTORY SMOOTHER ************" << endl;
+	//////cout << "********* TRAJECTORY SMOOTHER ************" << endl;
 	// ********* TRAJECTORY SMOOTHER ************
 
-	vector<double> new_path_x;
-	vector<double> new_path_y;
-
-	double last_x;
-	double last_y;
-	double last_yaw;
-	double x_prev;
-	double y_prev;
-
-	/*
-	We need to know what's actually the Ego motion state. We know it's location ans Speed and yaw but we are missing it's accel.
-	We need the accel to make sure that once we "stich" the next trajectory, it will transtion smoothly. We need to locate the next
-	2 points in such a way that speed and accel transtion smoothly.
-	*/
+	// No matter what, our next trajectory will be constructed at the end of the last one. Therefore, let's copy ALL previous_path points
 	int prev_path_size = prev_x_vals.size();
-	cout << "prev_path_size " << prev_path_size << endl;
-	if (prev_path_size < 2)
-	{
-		cout << "point 1 " << endl;
-
-		last_x = this->x;
-		last_y = this->y;
-		last_yaw = deg2rad(this->yaw);
-
-		x_prev = last_x - cos(last_yaw);
-		y_prev = last_y - sin(last_yaw);
-
-
-
-	}
-	else
-	{
-		cout << "going through x1-x2 " << endl;
-
-		int start_idx = prev_path_size;
-		last_x = prev_x_vals[start_idx - 1];
-		last_y = prev_y_vals[start_idx - 1];
-
-		x_prev = prev_x_vals[start_idx - 2];
-		y_prev = prev_y_vals[start_idx - 2];
-
-		last_yaw = atan2((last_y - y_prev), (last_x - x_prev));
-	}
-	//add previous
-	new_path_x.push_back(x_prev);
-	new_path_y.push_back(y_prev);
-	cout << "1 x= " << x_prev << " y= " << y_prev << endl;
-
-	//add actual
-	new_path_x.push_back(last_x);
-	new_path_y.push_back(last_y);
-	cout << "2 x= " << last_x << " y= " << last_y << endl;
-
-	/*
-	// Let's extract the coefficient from the trajectory that we'll need later
-	vector<double> s_coeff;
-	std::copy(trajectory.begin(), trajectory.begin() + 6, std::back_inserter(s_coeff));
-
-	vector<double> d_coeff;
-	std::copy(trajectory.begin() + 6, trajectory.begin() + 12, std::back_inserter(d_coeff));
-
-	double T = trajectory[12]; // time duration of the Best Trajectory Generated
-
-	int num_anchor_points = 10;
-	double dt = T / num_anchor_points; // (prev_path_size / 3)); // let's add 1/3 of the new JMT trajectory	
-
-	for (int i = 1; i <= num_anchor_points; i++)
-	{
-		double at_time = i*dt;
-		double s = evaluate(s_coeff, at_time);
-		double d = evaluate(d_coeff, at_time);
-		cout << i << " s= " << s << " d= " << d << endl;
-		vector<double> next_wp = this->planner.getXY(s, d, this->planner.road.map_waypoints_s, this->planner.road.map_waypoints_x, this->planner.road.map_waypoints_y);
-		new_path_x.push_back(next_wp[0]);
-		new_path_y.push_back(next_wp[1]);
-		cout << i << " x= " << next_wp[0] << " y= " << next_wp[1] << endl;
-	}
-
-	*/
-
-	for (int i = 1; i < 4; i++)
-	{
-		vector<double> next_wp = this->planner.getXY(this->s + 30 * i, this->planner.lane2d(this->lane), this->planner.road.map_waypoints_s, this->planner.road.map_waypoints_x, this->planner.road.map_waypoints_y);
-		new_path_x.push_back(next_wp[0]);
-		new_path_y.push_back(next_wp[1]);
-	}
-
-
-	int new_path_len = new_path_x.size();
-	for (size_t i = 0; i < new_path_len; i++)
-	{
-		double shift_x = new_path_x[i] - last_x;
-		double shift_y = new_path_y[i] - last_y;
-
-		new_path_x[i] = (shift_x * cos(0 - last_yaw) - shift_y * sin(0 - last_yaw));
-		new_path_y[i] = (shift_x * sin(0 - last_yaw) + shift_y * cos(0 - last_yaw));
-	}
-
-
-	// Now we create a smooth spline
-	cout << "Creating Spline. new_path_points (x): " << new_path_len << " (y): " << new_path_y.size() << endl;
-	tk::spline spl;
-	spl.set_points(new_path_x, new_path_y);
 	
-	for (size_t i = 0; i < prev_x_vals.size(); i++)
+	//////cout << "prev_path_size: " << prev_path_size << endl;
+	if (prev_path_size > 0)
 	{
-		next_x_vals.push_back(prev_x_vals[i]);
-		next_y_vals.push_back(prev_y_vals[i]);
-	}
-
-	double target_x = 30;// new_path_x[new_path_len - 1];// goal_s[0];
-	double target_y = spl(target_x);
-	double target_dist = sqrt(target_x*target_x + target_y*target_y);
-	double target_vs = this->planner.road.speed_limit - mph2ms(0.25) ;
-
-	double N = target_dist / (target_vs * this->planner.dt);
-	double x_final = 0;
-	double y_final;
-	cout << "Spline divided in (N): " << N << endl;
-
-	for (size_t i = 1; i < 50-prev_x_vals.size(); i++)
-	{
-		x_final += target_x / N;
-		y_final = spl(x_final);
-
-		double x_point = last_x + (x_final * cos(last_yaw) - y_final * sin(last_yaw));
-		double y_point = last_y + (x_final * sin(last_yaw) + y_final * cos(last_yaw));
-
-		next_x_vals.push_back(x_point);
-		next_y_vals.push_back(y_point);
-
-	}
-
-	cout << "Sending next Path len = " << next_x_vals.size() << endl;
-}
-
-void SmartVehicle::cruise_control2(vector<double> trajectory, vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals)
-{
-	cout << "********* TRAJECTORY SMOOTHER ************" << endl;
-	// ********* TRAJECTORY SMOOTHER ************
-	cout << "new Path len = " << planner.new_path_x.size() << endl;
-
-	
-	int new_path_len = this->planner.new_path_x.size();
-	double last_x = this->planner.new_path_x[new_path_len - 1];
-	double last_y = this->planner.new_path_y[new_path_len - 1];
-	double ref_theta = planner.ref_theta;
-	cout << "last point from prev x= " << last_x << " y= " << last_y << endl;
-	
-		
-	// Let's extract the coefficient from the trajectory that we'll need later
-	vector<double> s_coeff;
-	std::copy(trajectory.begin(), trajectory.begin() + 6, std::back_inserter(s_coeff));
-
-	vector<double> d_coeff;
-	std::copy(trajectory.begin() + 6, trajectory.begin() + 12, std::back_inserter(d_coeff));
-
-	double T = trajectory[12]; // time duration of the Best Trajectory Generated
-
-	/*
-	 Now we need to find the closest point on this new Traj to the "prev_path" point that we want to start building upon. i.e. this
-	 point is stored already on planner.new_path_x and new_path_y
-	*/
-
-	//vector<double> s_d = planner.getFrenet(last_x, last_y, ref_theta, planner.road.map_waypoints_x, planner.road.map_waypoints_y);
-	double t_start = 0.0;
-	double target_s = planner.start_s[0];
-	
-	//double target_d = s_d[1];
-	double s = this->s;
-	cout << "target_s= " << target_s << " ini s= " << s << endl;
-	while (s < target_s)
-	{
-		t_start += planner.dt;
-		s = evaluate(s_coeff, t_start);
-		cout << "s= " << s << endl;
-	}
-	
-	
-	/*
-	int use_prev_points = this->planner.time_offset_from_prev_path / this->planner.dt;
-	int prev_path_size = prev_x_vals.size();
-
-	t_start = ((use_prev_points > prev_path_size)? prev_path_size: use_prev_points) * this->planner.dt;
-	*/
-
-	cout << "t-start= " << t_start << endl;
-
-	for (double at_time = t_start; at_time <= T; at_time += planner.dt)
-		{		
-		double s = evaluate(s_coeff, at_time);
-		double d = evaluate(d_coeff, at_time);
-		//cout << at_time << " s= " << s << " d= " << d << endl;
-		vector<double> next_wp = this->planner.getXY(s, d, this->planner.road.map_waypoints_s, this->planner.road.map_waypoints_x, this->planner.road.map_waypoints_y);
-		planner.new_path_x.push_back(next_wp[0]);
-		planner.new_path_y.push_back(next_wp[1]);
-		//cout << at_time << " x= " << next_wp[0] << " y= " << next_wp[1] << endl;
+		for (size_t i = prev_path_size - prev_path_size; i < prev_path_size; i++) // We add only the last 2 the points from prev.
+		{
+			next_x_vals.push_back(prev_x_vals[i]);
+			next_y_vals.push_back(prev_y_vals[i]);
 		}
-	
-	
-	for (size_t i = 0; i < planner.new_path_x.size(); i++)
-	{
-		next_x_vals.push_back(planner.new_path_x[i]);
-		next_y_vals.push_back(planner.new_path_y[i]);
-	}
 
-	cout << "Sending next Path len = " << next_x_vals.size() << endl;
+	}
+	// WE don't initialize to 0 because we DONT want to add the initial point which is exactly the same as the End point of prev					
+	double time;
+		
+	for (time = dt; (time <= trajectory.duration && prev_path_size < MAX_NUM_POINTS) /*|| (state == ST_LANE_CHANGE && time <= trajectory.duration)*/; time += dt) // let's add 10 more points to use a spline...
+	{
+		double s = evaluate(trajectory.s_coeff, time);
+		double d = evaluate(trajectory.d_coeff, time);
+		if (s > Ego_start_status.s[0])
+		{
+			vector<double> next_wp = this->planner.getXY(s, d);
+			next_x_vals.push_back(next_wp[0]);
+			next_y_vals.push_back(next_wp[1]);
+			prev_path_size++;
+			////////cout << "at time: " << time << " s: " << s << " d: " << d << " x: " << next_wp[0] << " y: " << next_wp[1] << endl;
+		}
+			
+	}		
+	//////cout << "Final size: " << prev_path_size << endl;		
+
+	// Where did we end up? This point should be the starting point of the next traj.
+	time = time - dt;
+	//////cout << "last time eval: " << time << endl;
+	Ego_start_status.s = evaluate_f_and_N_derivatives(trajectory.s_coeff, time, 2);
+	Ego_start_status.d = evaluate_f_and_N_derivatives(trajectory.d_coeff, time, 2);
+	Ego_start_status.lane = planner.get_lane(Ego_start_status.d[0]);
+	//////cout << "Final- s: " << planner.final_s[0] << " s_dot: " << planner.final_s[1] << " s_ddot: " << planner.final_s[2] << endl;
+	//////cout << "Final- d: " << planner.final_d[0] << " d_dot: " << planner.final_d[1] << " d_ddot: " << planner.final_d[2] << endl;
+	//////cout << "Sending next Path len = " << next_x_vals.size() << endl;
+	
 }
+

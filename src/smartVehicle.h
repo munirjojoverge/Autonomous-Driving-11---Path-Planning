@@ -20,80 +20,92 @@
 #include <algorithm>    // std::min
 #include "PathPlanner.h"
 
+
+
 using namespace std;
 
-
-enum State
-{	
-	ST_CRUISE_CONTROL, 	// Cruise Control - Maintain a constant speed = SpeedLimit-buffer in the same lane
-	ST_WAIT,			// SmartVehicle Following - Disntance with SmartVehicle in front is < d_min and we need to slow down & speed Up (calc accel) behind it until we can Change lane or move at the desired speed 
-	ST_LANE_CHANGE,	
-};
 
 class SmartVehicle {
 public:
 	/**
 	* Constructor
-	*/
-	SmartVehicle(); // Default Costructor
-	SmartVehicle(PathPlanner &_pathPlanner) : planner(_pathPlanner) {
+	*/	
+	SmartVehicle(PathPlanner &_pathPlanner) : planner(_pathPlanner) 
+	{
 		this->state = ST_CRUISE_CONTROL;		
+		this->started_planning = false;
 	};
 
 	/**
 	* Destructor
 	*/
-	virtual ~SmartVehicle();
-	vector<double> vechileSize = { 4.5, 2 }; // Average SmartVehicle {Length, Width} in meters (https://en.wikipedia.org/wiki/Family_car)
+	virtual ~SmartVehicle();	
 	
 	double x;
 	double y;
 	double s;
-	double d;
-	double vs;
-	double vd;
-	double as;
-	double ad;
+	double d;	
 	double yaw;
 	double speed;
 	int lane;
 	int target_lane;
-	double target_speed;
+	double prev_target_speed;
+	maneuver_params follow_maneuver_params;
+	maneuver_params cruise_maneuver_params;
 	
 	//vector<double> prev_path_s;
 	//vector<double> prev_path_d;
 	
 	PathPlanner &planner;
-	
-	
+	bool follow_maneuver_added;
+	bool started_planning;
+	Ego_status Ego_start_status; // This is the status at the end of the last traj sent to SIM which is the START of the new traj planning
 
 	/* To allow for super states, it will be better to use an Int or a LongInt where each bit represents a state.
 	That way you can have more than one 1 active state: 000100100. But for now let's keep it
 	very simple and work with a flat FST and use a simple enumeration (look above)
 	*/
-	State state;
-
-	//void update(vector<double> EgoData, vector< vector<double> > sensor_fusion, vector<double> prev_path_x, vector<double> prev_path_y, vector<double> &next_x_vals, vector<double> &next_y_vals);
+	Maneuver state;
+	
 	void update(vector<double> EgoData, vector< vector<double> > sensor_fusion, vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals);
 
-	void update_state(vector<vector<double>> sensor_fusion, vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals);
+	vector<Road_Vehicle> generate_road_vehicles(vector<vector<double>> sensor_fusion);
 
-	void calculate_new_starting_point(vector<double> prev_x_vals, vector<double> prev_y_vals);
+	void calculate_new_starting_point_4_Traj_Generation(int not_processed_traj_size);
 
-	void update_possible_maneuvers(vector< vector<double> > sensor_fusion, int dir, double Va, vector < tuple<State, int > > &possible_maneuvers);
+	void update_state(vector<Road_Vehicle> road_vehicles, vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals);
 
-	void generate_possible_maneuvers(vector<vector<double>> sensor_fusion, vector<double> VehicleA, vector < tuple<State, int > > &possible_maneuvers);
+	void update_possible_maneuvers(int target_lane, Road_Vehicle VehicleA, Road_Vehicle VehicleB,  Road_Vehicle VehicleB2, vector < tuple<Maneuver, maneuver_params > > &possible_maneuvers);
 
-	void get_vehicle_infront_data(vector<vector<double>> sensor_fusion, vector<double> &VehicleA);
+	vector < tuple<Maneuver, maneuver_params > > generate_possible_maneuvers(vector<Road_Vehicle> road_vehicles);
 
-	void generate_best_trajectory(vector<vector<double>> sensor_fusion, vector<double> VehicleA, vector < tuple<State, int > > possible_maneuvers, vector<double> &best_trajectory, State &Ego_new_state);
+	maneuver_params generate_follow_params(Road_Vehicle VehicleA);
 
-	void smooth_trajectory(vector<double> trajectory, vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals);
+	maneuver_params generate_emergency_params(Road_Vehicle VehicleA);
 
-	void cruise_control(vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals);
+	maneuver_params generate_escape_params(Road_Vehicle Vehicle_A);
 
-	void cruise_control2(vector<double> trajectory, vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals);
+	maneuver_params generate_cruise_control_params(double target_speed);
+
+	maneuver_params generate_change_lane_params(double target_lane, double target_speed);
+	
+	Trajectory generate_best_trajectory(vector<Road_Vehicle> road_vehicles, vector < tuple<Maneuver, maneuver_params > > possible_maneuvers);
+
+	void smooth_trajectory_frenet2(Trajectory trajectory, vector<double> prev_x_vals, vector<double> prev_y_vals, vector<double> &next_x_vals, vector<double> &next_y_vals);
+
+	double get_maneuver_time(Ego_status Ego, double desired_speed);
+
+	double get_maneuver_accel(Ego_status Ego, double desired_speed, double maneuver_time);
+		
+	void add_lane_change_infront_B_maneuver(Road_Vehicle VechicleB, Road_Vehicle VechicleB2, int target_lane, vector < tuple<Maneuver, maneuver_params > > &possible_maneuvers);
+
+	void add_lane_change_behind_B_maneuver(Road_Vehicle VehicleB, int target_lane, vector < tuple<Maneuver, maneuver_params > > &possible_maneuvers);
+
+	void add_follow_maneuver(vector < tuple<Maneuver, maneuver_params > > &possible_maneuvers);
 };
 
 #endif
+
+
+
 

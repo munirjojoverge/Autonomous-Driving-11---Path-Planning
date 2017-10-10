@@ -5,6 +5,8 @@
 **********************************************/
 #include "road.h"
 
+using namespace tk; // spline
+
 /**
 * Initializes Road
 */
@@ -13,6 +15,7 @@ Road::Road(double speed_limit, int num_lanes, double lane_width, string waypoint
 	this->num_lanes = num_lanes;
 	this->speed_limit = speed_limit;
 	this->lane_width = lane_width;
+	
 
 	ifstream in_map_(waypoints_file.c_str(), ifstream::in);
 

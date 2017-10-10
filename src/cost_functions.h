@@ -8,6 +8,8 @@
 
 #include <vector>
 #include "road.h"
+#include "PathPlanner.h"
+#include "Road_Vehicle.h"
 
 using namespace std;
 
@@ -20,28 +22,36 @@ import numpy as np
 namespace cost_functions
 {
 	// COST FUNCTIONS
-	double time_diff_cost(vector<double> trajectory, double T);
+	double lane_change_cost(Trajectory trajectory, int dir);
 
-	double s_diff_cost(vector<double> trajectory, vector<double> goal_s, vector<double> sigma_s);
+	double time_diff_cost(Trajectory trajectory, double T);
 
-	double d_diff_cost(vector<double> trajectory, vector<double> goal_d, vector<double> sigma_d);
+	double diff_cost(vector<double> coeff, double duration, vector<double> goals, vector<double> sigma, double cost_weight);
 
-	double collision_cost(vector<double> trajectory, vector<vector<double>> sensor_fusion);
+	double s_diff_cost(Trajectory trajectory, vector<double> goal_s, vector<double> sigma_s);
 
-	double buffer_cost(vector<double> trajectory, vector<vector<double>> sensor_fusion);
+	double d_diff_cost(Trajectory trajectory, vector<double> goal_d, vector<double> sigma_d);
 
-	double stays_on_road_cost(vector<double> trajectory, Road road, double EgoWidth);
+	double collision_cost(Trajectory trajectory, vector<Road_Vehicle> road_vehicles);
 
-	double exceeds_speed_limit_cost(vector<double> trajectory, Road road);
+	double buffer_cost(Trajectory trajectory, vector<Road_Vehicle> road_vehicles);
 
-	double efficiency_cost(vector<double> trajectory, vector<double> goal_s);
+	double stays_on_road_cost(Trajectory trajectory, Road road, double EgoWidth);
 
-	double total_accel_cost(vector<double> trajectory, double EXPECTED_ACC_IN_ONE_SEC);
+	double exceeds_speed_limit_cost(Trajectory trajectory, Road road);
 
-	double max_accel_cost(vector<double> trajectory, double MAX_ACCEL);
+	double efficiency_cost(Trajectory trajectory, vector<double> goal_s);
 
-	double max_jerk_cost(vector<double> trajectory, double MAX_JERK);
+	double total_accel_cost(Trajectory trajectory, double EXPECTED_ACC_IN_ONE_SEC);
 
-	double total_jerk_cost(vector<double> trajectory, double EXPECTED_JERK_IN_ONE_SEC);
+	double max_accel_cost(Trajectory trajectory, double MAX_ACCEL);
+
+	double max_jerk_cost(Trajectory trajectory, double MAX_JERK);
+
+	double total_jerk_cost(Trajectory trajectory, double EXPECTED_JERK_IN_ONE_SEC);
+
+	double closest_distance_to_any_vehicle(Trajectory trajectory, vector<Road_Vehicle> road_vehicles, double dt);
+
+	double closest_distance_to_vehicle(Trajectory trajectory, Road_Vehicle road_vehicle, double dt);
 }
 #endif //COST_FUNCTIONS_H

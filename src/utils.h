@@ -15,8 +15,7 @@ using namespace std;
 
 namespace utils
 {
-	const double pi = 3.14159265;
-
+	
 	double evaluate(vector<double> JMT_coefficients, double t);
 
 	vector<double> differentiate(vector<double> coefficients);

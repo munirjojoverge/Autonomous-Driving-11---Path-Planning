@@ -11,8 +11,10 @@
 
 #include <vector>
 #include <string>
+#include "spline.h"
 
 using namespace std;
+using namespace tk; // spline
 
 class Road {
 public:
@@ -38,8 +40,8 @@ public:
 	vector<double> map_waypoints_s;
 	vector<double> map_waypoints_dx;
 	vector<double> map_waypoints_dy;
-
-	const double max_s = 6945.554; // The max s value before wrapping around the track back to 0	
+	
+	const double TRACK_LENGTH = 6945.554; // The max s value before wrapping around the track back to 0	
 		
 };
 #endif //ROAD_H

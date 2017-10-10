@@ -10,22 +10,25 @@
 #include <algorithm>    // std::max, min
 #include "cost_functions.h"
 #include "utils.h"
+#include "Planner_Constants.h"
 
 using namespace std;
 using namespace utils;
+using namespace constants;
 
 // priority levels for costs: Higher COST will give you a higher priority to AVOID
 
-const double TIME_DIFF  = 10 ^ 1;
-const double S_DIFF     = 10 ^ 3;
-const double D_DIFF     = 10 ^ 4;
-const double EFFICIENCY = 10 ^ 2;
-const double MAX_JERK   = 10 ^ 8;
-const double TOTAL_JERK = 10 ^ 7;
-const double COLLISION  = 10 ^ 10;
-const double DANGER     = 10 ^ 9;
-const double MAX_ACCEL  = 10 ^ 6;
-const double TOTAL_ACCEL = 10 ^ 5;
+const double TIME_DIFF  = 10 ^ 3;
+const double S_DIFF     = 10 ^ 5;
+const double D_DIFF     = 10 ^ 6;
+const double EFFICIENCY = 10 ^ 9;
+const double MAX_JERK   = 10 ^ 2;
+const double TOTAL_JERK = 10 ^ 3;
+const double COLLISION  = 10 ^ 15;
+const double DANGER     = 10 ^ 10;
+const double MAX_ACCEL  = 10 ^ 2;
+const double TOTAL_ACCEL = 10 ^ 3;
+const double RIGHT_LANE_CHANGE = 10^1;
 
 /*
 from helpers import logistic, to_equation, differentiate, nearest_approach_to_any_vehicle, get_f_and_N_derivatives
@@ -35,7 +38,18 @@ import numpy as np
 namespace cost_functions
 {
 	// COST FUNCTIONS
-	double time_diff_cost(vector<double> trajectory, double T)
+
+	double lane_change_cost(Trajectory trajectory, int dir)
+	{
+		/*
+		Binary cost function which penalizes RIGHT lane changes Vs LEFT lane changes.
+		Gives priority to Left lane changes Vs Right Lane changes (if both abailable).
+		*/
+		//return (trajectory.maneuver == ST_LANE_CHANGE && dir == RIGHT) ? RIGHT_LANE_CHANGE : 0.0;
+		return 0.0;
+	}
+
+	double time_diff_cost(Trajectory trajectory, double T)
 	{
 		/*
 		Penalizes trajectories that span a duration which is longer or
@@ -43,238 +57,220 @@ namespace cost_functions
 		*/
 
 		// the last element on the trajectory should hold the last time value, i.e the total duration
-		double t = trajectory[12];
+		double t = trajectory.duration;
 		return TIME_DIFF * (logistic(fabs(t - T) / T));
 	}
 
-	double s_diff_cost(vector<double> trajectory, vector<double> goal_s, vector<double> sigma_s)
+	double diff_cost(vector<double> coeff, double duration, vector<double> goals, vector<double> sigma, double cost_weight)
 	{
 		/*
 		Penalizes trajectories whose s coordinate(and derivatives)
 		differ from the goal.
 		*/
-		//cout << "23 - Traj Size: " << trajectory.size() << endl;
 		double cost = 0.0;
-		vector<double> s_coeff;
-		//cout << "24 - parse Traj" << endl;
-		std::copy(trajectory.begin(), trajectory.begin() + 6, std::back_inserter(s_coeff));
-		double t = trajectory[12];
-
-		//cout << "25 - s_diff_cost: t = " << t << endl;
-		vector<double> evals = evaluate_f_and_N_derivatives(s_coeff, t, 2);
-		//cout << "26 - Evaluating f and N derivatives Done. Size:" << evals.size() << endl;
+		vector<double> evals = evaluate_f_and_N_derivatives(coeff, duration, 2);
+		//////////cout << "26 - Evaluating f and N derivatives Done. Size:" << evals.size() << endl;
 
 		for (size_t i = 0; i < evals.size(); i++)
 		{
-			double diff = fabs(evals[i] - goal_s[i]);
-			cost += logistic(diff / sigma_s[i]);
+			double diff = fabs(evals[i] - goals[i]);
+			cost += logistic(diff / sigma[i]);
 		}
-		//cout << "27 - s_diff_coeff Cost Calculated " << endl;
-		return S_DIFF * cost;
+		////////cout << "diff_coeff Cost Calculated " << endl;
+		return cost_weight * cost;
 	}
 
-	double d_diff_cost(vector<double> trajectory, vector<double> goal_d, vector<double> sigma_d)
+	double s_diff_cost(Trajectory trajectory, vector<double> goal_s, vector<double> sigma_s)
+	{
+		/*
+		Penalizes trajectories whose s coordinate(and derivatives)
+		differ from the goal.
+		*/
+		//////////cout << "27 - s_diff_coeff Cost Calculated " << endl;
+		return diff_cost(trajectory.s_coeff, trajectory.duration, goal_s, sigma_s, S_DIFF);
+	}
+
+	double d_diff_cost(Trajectory trajectory, vector<double> goal_d, vector<double> sigma_d)
 	{
 		/*
 		Penalizes trajectories whose d coordinate(and derivatives)
 		differ from the goal.
 		*/
-		double cost = 0.0;
-		vector<double> d_coeff;
-		std::copy(trajectory.begin() + 6, trajectory.begin() + 12, std::back_inserter(d_coeff));
-		double t = trajectory[12];
-
-		vector<double> evals = evaluate_f_and_N_derivatives(d_coeff, t, 2);
-		for (size_t i = 0; i < evals.size(); i++)
-		{
-			double diff = fabs(evals[i] - goal_d[i]);
-			cost += logistic(diff / sigma_d[i]);
-		}
-		return D_DIFF * cost;
+		return diff_cost(trajectory.d_coeff, trajectory.duration, goal_d, sigma_d, D_DIFF);
 	}
 
-	double collision_cost(vector<double> trajectory, vector<vector<double>> sensor_fusion)
+	double collision_cost(Trajectory trajectory, vector<Road_Vehicle> road_vehicles)
 	{
 		/*
 		Binary cost function which penalizes collisions.
-		*/
-		double cost = 0.0;
-		/*
-		nearest = nearest_approach_to_any_vehicle(traj, predictions)
-		if nearest < 2 * VEHICLE_RADIUS : return 1.0
-		else : return 0.0;
-		*/
-		return COLLISION * cost;
+		*/	
+		double nearest = closest_distance_to_any_vehicle(trajectory, road_vehicles,dt);
+		return (nearest < 1 * VEHICLE_SIZE[0]) ? COLLISION : 0.0;		
 	}
 
-	double buffer_cost(vector<double> trajectory, vector<vector<double>> sensor_fusion)
+	double buffer_cost(Trajectory trajectory, vector<Road_Vehicle> road_vehicles)
 	{
 		/*
 		Penalizes getting close to other vehicles.
-		*/
-		double cost = 0.0;
-		/*
-		nearest = nearest_approach_to_any_vehicle(traj, predictions)
-		return logistic(2 * VEHICLE_RADIUS / nearest)
-		*/
-		return DANGER * cost;
+		*/		
+		double nearest = closest_distance_to_any_vehicle(trajectory, road_vehicles,dt);		
+		return DANGER * (logistic(2 * MIN_FOLLOW_DISTANCE / nearest));
 	}
 
-	double stays_on_road_cost(vector<double> trajectory, Road road, double EgoWidth)
+	double stays_on_road_cost(Trajectory trajectory, Road road, double EgoWidth)
 	{		
-		
+		////////cout << "stays_on_road_cost" << endl;
 		double RoadWidth = road.num_lanes * road.lane_width;
-
-		vector<double> d_coeff;
-		std::copy(trajectory.begin() + 6, trajectory.begin() + 12, std::back_inserter(d_coeff));
-		double T = trajectory[12];
-		double dt = T / 100.0;
+		
+		double time_step = dt; // max(trajectory.duration / 50.0, dt);
 		double t = 0.0;
 		bool OnRoad = true;
 		
-		while (OnRoad && t<T)
+		while (OnRoad && t < trajectory.duration)
 		{
-			double d = evaluate(d_coeff, t);
+			double d = evaluate(trajectory.d_coeff, t);
 			OnRoad = ((d > EgoWidth) && (d < (RoadWidth - EgoWidth)));
-			t += dt;
+			t += time_step;
 		}	
-		return DANGER * 1; // ((OnRoad) ? 0 : 1);
+		return DANGER * ((OnRoad) ? 0 : 1);
 
 	}
 
-	double exceeds_speed_limit_cost(vector<double> trajectory, Road road)
+	double exceeds_speed_limit_cost(Trajectory trajectory, Road road)
 	{
-		vector<double> s_coeff;
-		std::copy(trajectory.begin(), trajectory.begin() + 6, std::back_inserter(s_coeff));
 		
-		double T = trajectory[12];
-		double dt = T / 100.0;
-		double t = 0;
-		vector<double> s_dot = differentiate(s_coeff);
+		////////cout << "exceeds_speed_limit_cost" << endl;
+		double time_step = dt; // max(trajectory.duration / 50.0, dt);
+		double t = 0.0;
+		vector<double> s_dot = differentiate(trajectory.s_coeff);
 		bool UnderSpeeLimit = true;
-		while (UnderSpeeLimit && t<T)
+		while (UnderSpeeLimit && t < trajectory.duration)
 		{
 			double Speed = evaluate(s_dot, t);
 			UnderSpeeLimit = (Speed <= road.speed_limit);
-			t += dt;
+			t += time_step;
 		}
 		return DANGER * ((UnderSpeeLimit) ? 0 : 1);
 	}
 
-	double efficiency_cost(vector<double> trajectory, vector<double> goal_s)
+	double efficiency_cost(Trajectory trajectory, vector<double> goal_s)
 	{
 		/*
 		Rewards high average speeds.
 		*/
-		vector<double> s_coeff;
-		std::copy(trajectory.begin(), trajectory.begin() + 6, std::back_inserter(s_coeff));
-		double t = trajectory[12];
+		////////cout << "efficiency_cost" << endl;
+		double distance_traveled = evaluate(trajectory.s_coeff, trajectory.duration) - evaluate(trajectory.s_coeff, 0.0);
+		double avg_v = distance_traveled / trajectory.duration;
 
-		double avg_v = evaluate(s_coeff, t) / t;
-
-		return EFFICIENCY * (logistic(2 * (goal_s[1] - avg_v) / avg_v));
+		return EFFICIENCY * ((logistic(2 * (goal_s[1] - avg_v) / avg_v)) + 0.5);
 	}
 
-	double total_accel_cost(vector<double> trajectory, double EXPECTED_ACC_IN_ONE_SEC)
+	double total_accel_cost(Trajectory trajectory, double EXPECTED_ACC_IN_ONE_SEC)
 	{
-		vector<double> s_coeff;
-		std::copy(trajectory.begin(), trajectory.begin() + 6, std::back_inserter(s_coeff));
-
-		// I should calculate also d accelerations...
-		vector<double> d_coeff;
-		std::copy(trajectory.begin() + 6, trajectory.begin() + 12, std::back_inserter(d_coeff));
-
-		double T = trajectory[12];
-
-		vector<double> s_dot = differentiate(s_coeff);
+		
+		////////cout << "total_accel_cost" << endl;
+		vector<double> s_dot = differentiate(trajectory.s_coeff);
 		vector<double> s_d_dot = differentiate(s_dot);
 
 		double total_acc = 0.0;
-		double dt = T / 100.0;
-		for (size_t i = 1; i <= 100; i++)
-		{
-			double t = dt * i;
-			total_acc += fabs(evaluate(s_d_dot, t)*dt);
+		double time_step = dt; // max(trajectory.duration / 50.0, dt);
+
+		for (double t = 0.0; t <= trajectory.duration; t += time_step)
+		{			
+			total_acc += fabs(evaluate(s_d_dot, t)*time_step);
 		}
-		double acc_per_second = total_acc / T;
+		double acc_per_second = total_acc / trajectory.duration;
 
 		return TOTAL_ACCEL * (logistic(acc_per_second / EXPECTED_ACC_IN_ONE_SEC));
 	}
 
-	double max_accel_cost(vector<double> trajectory, double MAX_ACCEL)
+	double max_accel_cost(Trajectory trajectory, double MAX_ACCEL)
 	{
-		vector<double> s_coeff;
-		std::copy(trajectory.begin(), trajectory.begin() + 6, std::back_inserter(s_coeff));
-
-		vector<double> d_coeff;
-		std::copy(trajectory.begin() + 6, trajectory.begin() + 12, std::back_inserter(d_coeff));
-
-		double T = trajectory[12];
-
-		vector<double> s_dot = differentiate(s_coeff);
+		////////cout << "max_accel_cost" << endl;
+		vector<double> s_dot = differentiate(trajectory.s_coeff);
 		vector<double> s_d_dot = differentiate(s_dot);
 
-		double dt = T / 100.0;
+		double time_step = dt; // max(trajectory.duration / 50.0, dt);
 		vector<double> all_accs;
-		for (size_t i = 1; i <= 100; i++)
+		for (double t = 0.0; t <= trajectory.duration; t += time_step)
 		{
-			all_accs.push_back(evaluate(s_d_dot, (dt * i)));
+			all_accs.push_back(evaluate(s_d_dot, t));
 		}
 		double max_acc = *std::max_element(all_accs.begin(), all_accs.end());
 
 		return MAX_ACCEL * ((fabs(max_acc) > MAX_ACCEL) ? 1 : 0);
 	}
 
-	double max_jerk_cost(vector<double> trajectory, double MAX_JERK)
+	double max_jerk_cost(Trajectory trajectory, double MAX_JERK)
 	{
-		vector<double> s_coeff;
-		std::copy(trajectory.begin(), trajectory.begin() + 6, std::back_inserter(s_coeff));
-
-		vector<double> d_coeff;
-		std::copy(trajectory.begin() + 6, trajectory.begin() + 12, std::back_inserter(d_coeff));
-
-		double T = trajectory[12];
-
-		vector<double> s_dot = differentiate(s_coeff);
+		
+		////////cout << "max_jerk_cost" << endl;
+		vector<double> s_dot = differentiate(trajectory.s_coeff);
 		vector<double> s_d_dot = differentiate(s_dot);
 
 		vector<double> jerk = differentiate(s_d_dot);
 
-		double dt = T / 100.0;
+		double time_step = dt; // max(trajectory.duration / 50.0, dt);
 		vector<double> all_jerks;
-		for (size_t i = 1; i <= 100; i++)
+		for (double t = 0.0; t <= trajectory.duration; t += time_step)
 		{
-			all_jerks.push_back(evaluate(jerk, (dt * i)));
+			all_jerks.push_back(evaluate(jerk, t));
 		}
 		double max_jerk = *std::max_element(all_jerks.begin(), all_jerks.end());
 
 		return MAX_JERK * ((fabs(max_jerk) > MAX_JERK) ? 1 : 0);
 	}
 
-	double total_jerk_cost(vector<double> trajectory, double EXPECTED_JERK_IN_ONE_SEC)
+	double total_jerk_cost(Trajectory trajectory, double EXPECTED_JERK_IN_ONE_SEC)
 	{
-		vector<double> s_coeff;
-		std::copy(trajectory.begin(), trajectory.begin() + 6, std::back_inserter(s_coeff));
-
-		vector<double> d_coeff;
-		std::copy(trajectory.begin() + 6, trajectory.begin() + 12, std::back_inserter(d_coeff));
-
-		double T = trajectory[12];
-
-		vector<double> s_dot = differentiate(s_coeff);
+		////////cout << "total_jerk_cost" << endl;
+		vector<double> s_dot = differentiate(trajectory.s_coeff);
 		vector<double> s_d_dot = differentiate(s_dot);
 
 		vector<double> jerk = differentiate(s_d_dot);
 
 		double total_jerk = 0.0;
-		double dt = T / 100.0;
-		for (size_t i = 1; i <= 100; i++)
+		double time_step = dt; // max(trajectory.duration / 50.0, dt);
+		for (double t = 0.0; t <= trajectory.duration; t += time_step)
 		{
-			double t = dt * i;
-			total_jerk += fabs(evaluate(jerk, t)*dt);
+			total_jerk += fabs(evaluate(jerk, t)*time_step);
 		}
-		double jerk_per_second = total_jerk / T;
+		double jerk_per_second = total_jerk / trajectory.duration;
 
 		return TOTAL_JERK * (logistic(jerk_per_second / EXPECTED_JERK_IN_ONE_SEC));
 	}
+
+	double closest_distance_to_any_vehicle(Trajectory trajectory, vector<Road_Vehicle> road_vehicles, double time_step)
+	{
+		/*
+		Calculates the closest distance to any vehicle during a trajectory.
+		*/
+		double closest = 999999;
+		for (auto v : road_vehicles)
+		{
+			double dist = closest_distance_to_vehicle(trajectory, v, dt);
+			if (dist < closest)
+				closest = dist;
+		}
+		return closest;
+	}
+
+	double closest_distance_to_vehicle(Trajectory trajectory, Road_Vehicle road_vehicle, double time_step)
+	{
+		/*
+		Calculates the closest distance to a the provided vehicle during a trajectory.
+		*/
+		double closest = 999999;
+		for (double t = 0.0; t <= trajectory.duration; t += dt)
+		{
+			double cur_s = evaluate(trajectory.s_coeff, t);
+			double cur_d = evaluate(trajectory.d_coeff, t);
+			Frenet_Position v_pos = road_vehicle.predict_frenet_at(t); // Vechicle position at time t
+			double dist = sqrt(pow((cur_s - v_pos.s), 2) + pow((cur_d - v_pos.d), 2));
+			if (dist < closest)
+				closest = dist;
+		}
+		return closest;
+	}
 }
+

@@ -53,21 +53,21 @@ int main() {
   double lane_width = 4; // meters
   Road highway = Road(speed_limit, num_lanes, lane_width, waypoints_file);
 
-  //cout << "Road created!!" << endl;
+  ////cout << "Road created!!" << endl;
 
   PathPlanner HwyPlanner = PathPlanner(highway);
-  //cout << "Path Planner created !!" << endl;
+  ////cout << "Path Planner created !!" << endl;
 
   SmartVehicle Ego = SmartVehicle(HwyPlanner);
 
-  cout << "Ego instance created !! - State: " << Ego.state << endl;
+  //cout << "Ego instance created !! - Maneuver: " << Ego.state << endl;
 
   h.onMessage([&Ego](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
     //auto sdata = string(data).substr(0, length);
-    //cout << sdata << endl;
+    ////cout << sdata << endl;
     if (length && length > 2 && data[0] == '4' && data[1] == '2') {
 
       auto s = hasData(data);
@@ -103,18 +103,20 @@ int main() {
 			/******************************************************			
 			Path Planning: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
 			 ******************************************************/ 
+			ofstream single_iteration_log;
+			single_iteration_log.open("path_planning_log-single_iteration.csv");
+
           	vector<double> next_x_vals;
           	vector<double> next_y_vals;
 
 			// 1) Let's pack our car data in 1 vector
 			vector<double> EgoData = { car_x, car_y, car_s, car_d, car_yaw, car_speed };
-			//cout << "Ego Data packed!!" << endl;
+			////cout << "Ego Data packed!!" << endl;
 
-			// 2) Generate the path based on our car state and the vehicles on the road data.			    
-			next_x_vals.clear(); next_y_vals.clear();
-			cout << "Planner is about to Update" << endl;			
+			// 2) Generate the path based on our car state and the vehicles on the road data.			    			
+			//cout << "Planner is about to Update" << endl;			
 			Ego.update(EgoData, sensor_fusion, previous_path_x, previous_path_y, next_x_vals, next_y_vals);			
-			cout << "Planner Finished Update" << endl;
+			//cout << "Planner Finished Update" << endl;
           	// 3) We send the path to the simulator
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;

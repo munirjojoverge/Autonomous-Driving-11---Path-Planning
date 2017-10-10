@@ -6,20 +6,23 @@
 
 #include <iostream>
 #include "utils.h"
+#include "Planner_Constants.h"
 
 using namespace std;
+using namespace constants;
 
 namespace utils
 {
 	double evaluate(vector<double> JMT_coefficients, double t)
 	{
-		//cout << "evaluate - Coeff: " << JMT_coefficients.size() << endl;
+		////////cout << "evaluate - Coeff: " << JMT_coefficients.size() << endl;
 		double total = 0.0;
 		for (size_t i = 0; i < JMT_coefficients.size(); i++)
-		{			
+		{
 			total += JMT_coefficients[i] * pow(t, i);
-			//cout << "evaluate - i = " << i << " coeff: " << JMT_coefficients[i] << " total: " << total << endl;
+			////////cout << "evaluate - i = " << i << " coeff: " << JMT_coefficients[i] << " total: " << total << endl;
 		}
+		
 		return total;
 	}
 
@@ -33,7 +36,7 @@ namespace utils
 		for (size_t i = 1; i < coefficients.size(); i++)
 		{
 			derivative_coeff.push_back(coefficients[i] * i);
-			//cout << "diff - Coeff[" << i-1 << "] = " << derivative_coeff[i-1] << endl;
+			////////cout << "diff - Coeff[" << i-1 << "] = " << derivative_coeff[i-1] << endl;
 		}
 
 		return derivative_coeff;
@@ -43,10 +46,12 @@ namespace utils
 	{
 		vector<double> values;
 		values.push_back(evaluate(coefficients, t));
+		vector<double> d_coeff = differentiate(coefficients);
 		for (int i = 1; i <= N; i++)
 		{
-			vector<double> d_coeff = differentiate(coefficients);
 			values.push_back(evaluate(d_coeff, t));
+			d_coeff = differentiate(d_coeff);
+			
 		}
 		return values;
 	}
@@ -59,10 +64,11 @@ namespace utils
 
 		Useful for cost functions.
 		*/
-		//cout << "Logistic In. x = " << x << endl;
+		////////cout << "Logistic In. x = " << x << endl;
 
 		return 2.0 / (1 + exp(-x)) - 1.0;
 	}
+
 
 	void solve_quadratic(double a, double b, double c, double &x1, double &x2)
 	{
@@ -73,9 +79,9 @@ namespace utils
 			x1 = (-b + sqrt(discriminant)) / (2 * a);
 			x2 = (-b - sqrt(discriminant)) / (2 * a);
 			/*
-			cout << "Roots are real and different." << endl;
-			cout << "x1 = " << x1 << endl;
-			cout << "x2 = " << x2 << endl;
+			//////cout << "Roots are real and different." << endl;
+			//////cout << "x1 = " << x1 << endl;
+			//////cout << "x2 = " << x2 << endl;
 			*/
 		}
 
@@ -84,8 +90,8 @@ namespace utils
 			x1 = (-b + sqrt(discriminant)) / (2 * a);
 			x2 = x1;
 			/*
-			cout << "Roots are real and same." << endl;			
-			cout << "x1 = x2 =" << x1 << endl;
+			//////cout << "Roots are real and same." << endl;			
+			//////cout << "x1 = x2 =" << x1 << endl;
 			*/
 		}
 
@@ -93,13 +99,13 @@ namespace utils
 			/*
 			realPart = -b / (2 * a);
 			imaginaryPart = sqrt(-discriminant) / (2 * a);
-			cout << "Roots are complex and different." << endl;
-			cout << "x1 = " << realPart << "+" << imaginaryPart << "i" << endl;
-			cout << "x2 = " << realPart << "-" << imaginaryPart << "i" << endl;
+			//////cout << "Roots are complex and different." << endl;
+			//////cout << "x1 = " << realPart << "+" << imaginaryPart << "i" << endl;
+			//////cout << "x2 = " << realPart << "-" << imaginaryPart << "i" << endl;
 			*/
 		}
 	}
-
+	
 	double mph2ms(double mph) 
 	{ 
 		return mph * 0.44704;
@@ -107,5 +113,6 @@ namespace utils
 		
 	double deg2rad(double x) { return x * pi / 180; }
 	double rad2deg(double x) { return x * 180 / pi; }
+
 
 }
